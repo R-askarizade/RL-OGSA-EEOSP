@@ -2,7 +2,7 @@ import numpy as np
 import random as pyrand
 from typing import List, Tuple, Dict
 
-import ConfigClass.config 
+import ConfigClass.config
 from ModelClasses.sensor_node import SensorNode
 
 
@@ -21,8 +21,8 @@ class GravitationalOptimizer:
         alpha: float = 0.6,
         beta: float = 0.4,
         G0: float = 100.0,
-        use_obl: bool = True,  
-        K0: int = None,           
+        use_obl: bool = True,
+        K0: int = None,
     ):
         self.nodes = [n for n in nodes if n.is_alive()]
         self.num_heads = min(num_heads, len(self.nodes))
@@ -52,7 +52,8 @@ class GravitationalOptimizer:
             return float("inf")
 
         try:
-            heads = [self.id_to_node[hid] for hid in unique_head_ids if hid in self.id_to_node]
+            heads = [self.id_to_node[hid]
+                     for hid in unique_head_ids if hid in self.id_to_node]
         except KeyError:
             return float("inf")
 
@@ -114,7 +115,7 @@ class GravitationalOptimizer:
 
         for t in range(self.iterations):
             # 2. Update gravitational constant
-            G = self.G0 * np.exp(-20 * t / self.iterations) 
+            G = self.G0 * np.exp(-20 * t / self.iterations)
 
             # 3. Compute masses
             worst_f = max(fitness_vals)
@@ -122,7 +123,8 @@ class GravitationalOptimizer:
             if worst_f == best_f:
                 masses = [1.0 / self.pop_size] * self.pop_size
             else:
-                masses = [(worst_f - f) / (worst_f - best_f) for f in fitness_vals]
+                masses = [(worst_f - f) / (worst_f - best_f)
+                          for f in fitness_vals]
                 total_mass = sum(masses)
                 if total_mass > 0:
                     masses = [m / total_mass for m in masses]
@@ -152,14 +154,15 @@ class GravitationalOptimizer:
                             candidates_with_force.append((candidate_id, force))
 
                     if candidates_with_force:
-                        total_force = sum(force for _, force in candidates_with_force)
+                        total_force = sum(
+                            force for _, force in candidates_with_force)
                         if total_force > 0:
                             r = pyrand.random() * total_force
                             cum_force = 0.0
                             for cid, force in candidates_with_force:
                                 cum_force += force
                                 if r <= cum_force:
-                                    if pyrand.random() < 0.8:  
+                                    if pyrand.random() < 0.8:
                                         new_sol[j] = cid
                                     break
 
@@ -173,11 +176,14 @@ class GravitationalOptimizer:
 
                 if len(unique_new_sol) < self.num_heads:
                     missing_count = self.num_heads - len(unique_new_sol)
-                    available_ids = [id_ for id_ in self.all_ids if id_ not in seen]
-                    selected_missing = pyrand.sample(available_ids, min(missing_count, len(available_ids)))
+                    available_ids = [
+                        id_ for id_ in self.all_ids if id_ not in seen]
+                    selected_missing = pyrand.sample(
+                        available_ids, min(missing_count, len(available_ids)))
                     unique_new_sol.extend(selected_missing)
                     while len(unique_new_sol) < self.num_heads:
-                        remaining_ids = [id_ for id_ in self.all_ids if id_ not in unique_new_sol]
+                        remaining_ids = [
+                            id_ for id_ in self.all_ids if id_ not in unique_new_sol]
                         if remaining_ids:
                             unique_new_sol.append(pyrand.choice(remaining_ids))
                         else:

@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Tuple, Optional
 
-import ConfigClass.config 
+import ConfigClass.config
 from ModelClasses.cluster_manager import ClusterManager
 
 
@@ -23,7 +23,7 @@ class ReclusteringPolicy:
         enable_mobility: bool = True,
         enable_fitness: bool = True
     ):
-        self.cm = cm 
+        self.cm = cm
         self.recluster_period = recluster_period
         self.energy_threshold = energy_threshold
         self.load_threshold = load_threshold
@@ -39,29 +39,29 @@ class ReclusteringPolicy:
 
         self.last_recluster_round = 0
         self.last_sink_pos: Optional[Tuple[float, float]] = None
-        
-    
+
     def _fitness_based(self, current_round: int, check_interval: int = 10, threshold: float = 0.15) -> bool:
         """
         # TODO -> FILL DOCUMENTATION
         """
         if not self.enable_fitness or current_round % check_interval != 0:
             return False
-    
+
         # Get current cluster head IDs
         current_heads = [h.id for h in self.cm.cluster_heads if h.is_alive()]
         if not current_heads:
             return True
-    
+
         # Compute current fitness
         current_fit = self._compute_fitness(current_heads)
-    
+
         # Run lightweight optimization to find best possible fitness NOW
         try:
             optimizer = GravitationalOptimizer(
                 nodes=self.cm.nodes,
                 num_heads=len(current_heads),
-                sink_pos=self.cm.sink_pos if hasattr(self.cm, 'sink_pos') else (0, 0),
+                sink_pos=self.cm.sink_pos if hasattr(
+                    self.cm, 'sink_pos') else (0, 0),
                 iterations=6,
                 population_size=6,
                 alpha=0.6,
@@ -71,34 +71,34 @@ class ReclusteringPolicy:
             best_fit = self._compute_fitness(best_heads)
         except Exception:
             return False
-    
+
         # If current solution is much worse than best possible, trigger recluster
         if current_fit > best_fit * (1 - threshold):
             self._last_best_fitness = best_fit
             self._last_current_fitness = current_fit
             return True
-    
+
         return False
-    
+
     def _compute_fitness(self, head_ids: List[int]) -> float:
         """Reuse the same fitness logic as in GravitationalOptimizer."""
         if not head_ids:
             return float("inf")
-        
+
         try:
-            heads = [next(n for n in self.cm.nodes if n.id == hid) for hid in head_ids]
+            heads = [next(n for n in self.cm.nodes if n.id == hid)
+                     for hid in head_ids]
         except StopIteration:
             return float("inf")
-    
+
         total_dist = 0.0
         for n in self.cm.nodes:
             dmin = min(n.distance_to(h) for h in heads)
             total_dist += dmin
         avg_dist = total_dist / len(self.cm.nodes)
-    
+
         e_avg = np.mean([h.energy / h.init_energy for h in heads])
         return 0.6 * avg_dist + 0.4 * (1.0 - e_avg)
-    
 
     def _time_based(self, current_round: int) -> bool:
         """Check if enough rounds have passed since last re-clustering."""
@@ -121,7 +121,7 @@ class ReclusteringPolicy:
         """Check if any cluster exceeds the maximum allowed member count."""
         if not self.enable_load:
             return False
-        clusters = self.cm.get_clusters() 
+        clusters = self.cm.get_clusters()
         for members in clusters.values():
             if len(members) > self.load_threshold:
                 return True
@@ -135,8 +135,8 @@ class ReclusteringPolicy:
         if not self.enable_mobility:
             return False
         if self.last_sink_pos is None:
-            self.last_sink_pos = current_sink_pos 
-            return False  
+            self.last_sink_pos = current_sink_pos
+            return False
         dx = current_sink_pos[0] - self.last_sink_pos[0]
         dy = current_sink_pos[1] - self.last_sink_pos[1]
         distance = np.hypot(dx, dy)
@@ -146,7 +146,7 @@ class ReclusteringPolicy:
         self, current_round: int, current_sink_pos: Tuple[float, float]
     ) -> Tuple[bool, Optional[str]]:
         triggers = []
-    
+
         if self._time_based(current_round):
             triggers.append(("time", "Time-based trigger"))
         if self._energy_based():
@@ -157,11 +157,11 @@ class ReclusteringPolicy:
             triggers.append(("mobility", "Mobility-based trigger"))
         if self._fitness_based(current_round):
             triggers.append(("fitness", "Fitness-degradation trigger"))
-    
+
         if triggers:
             reason = triggers[0][1]
             return True, reason
-    
+
         return False, None
 
     def update_after_recluster(self, current_round: int, current_sink_pos: Tuple[float, float]):

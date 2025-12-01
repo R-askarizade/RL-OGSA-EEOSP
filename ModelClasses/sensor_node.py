@@ -2,7 +2,8 @@ from typing import Optional, List, Tuple, Union
 import math
 import random
 
-import ConfigClass.config 
+import ConfigClass.config
+
 
 class SensorNode:
 
@@ -36,10 +37,22 @@ class SensorNode:
         self.packets_received = 0
         self.schedule_next_data_gen(current_round=0)
 
-    def schedule_next_data_gen(self, current_round: int, avg_interval: int=3):
+        # list of generation rounds for undelivered packets
+        self.pending_packets: List[int] = []
+        # generation rounds of packets waiting to be sent to sink
+        self.buffered_packets: List[int] = []
+
+        # max total packets (pending + buffered) - for: Buffer Overflow, Traffic Load
+        self.buffer_size = 10
+
+    def generate_packet(self, current_round: int):
+        """Add a new packet generated at current_round."""
+        self.pending_packets.append(current_round)
+
+    def schedule_next_data_gen(self, current_round: int, avg_interval: int = 3):
         """Schedule the next data generation round based on an exponential-like random interval."""
         next_interval = random.randint(1, avg_interval*2)
-        self.next_data_gen_round = current_round + next_interval 
+        self.next_data_gen_round = current_round + next_interval
 
     def position(self) -> Optional[Tuple[float, float]]:
         """Return (x, y) if known, else None."""

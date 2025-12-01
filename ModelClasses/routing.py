@@ -2,7 +2,7 @@ import numpy as np
 import math
 from typing import Dict, List, Tuple, Optional
 
-import ConfigClass.config 
+import ConfigClass.config
 from ModelClasses.sensor_node import SensorNode
 from ModelClasses.energy_model import EnergyModel
 from ModelClasses.mobile_sink import MobileSink
@@ -21,13 +21,14 @@ class RoutingManager:
         weight_distance: float = 0.5,
         weight_energy: float = 0.3,
         weight_load: float = 0.1,
-        weight_trust: float = 0.1, 
+        weight_trust: float = 0.1,
         comm_range: float = 40.0,
-        multipath: bool = True, 
+        multipath: bool = True,
     ):
         if mode not in {"single-hop", "multi-hop"}:
             raise ValueError("Mode must be 'single-hop' or 'multi-hop'")
-        self.nodes = [n for n in nodes if n.is_alive() and n.has_known_position()]
+        self.nodes = [n for n in nodes if n.is_alive()
+                      and n.has_known_position()]
         self.energy_model = energy_model
         self.mode = mode
         self.comm_range = comm_range
@@ -39,17 +40,21 @@ class RoutingManager:
         self.load_count: Dict[int, int] = {n.id: 0 for n in self.nodes}
         self.trust_score: Dict[int, float] = {n.id: 1.0 for n in self.nodes}
 
+        self.total_retransmissions = 0
+
     def update_trust(self, node_id: int, success: bool):
         """Update trust score based on transmission success."""
         if success:
-            self.trust_score[node_id] = min(1.0, self.trust_score[node_id] + 0.05)
+            self.trust_score[node_id] = min(
+                1.0, self.trust_score[node_id] + 0.05)
         else:
-            self.trust_score[node_id] = max(0.1, self.trust_score[node_id] - 0.1)
+            self.trust_score[node_id] = max(
+                0.1, self.trust_score[node_id] - 0.1)
 
     def transmit_with_retransmit(
         self,
         sender: 'SensorNode',
-        receiver: 'SensorNode',  
+        receiver: 'SensorNode',
         data_size: int,
         packet_loss_prob: float,
         max_attempts: int = 3
@@ -57,8 +62,8 @@ class RoutingManager:
         """
         # TODO -> FILL DOCUMENTATIONS
         """
-        for _ in range(max_attempts):
-        
+        for attempt in range(1, max_attempts+1):
+
             if isinstance(receiver, SensorNode):
                 dist = sender.distance_to(receiver)
             else:
@@ -73,10 +78,11 @@ class RoutingManager:
                 if not receiver.is_alive():
                     return False
 
+            # Energy consumption for routing
             if np.random.rand() > packet_loss_prob:
-                return True
+                return True, attempt
 
-        return False
+        return False, max_attempts
 
     def compute_cost(self, src: 'SensorNode', dst) -> float:
         if isinstance(dst, (tuple, list)):
@@ -90,7 +96,8 @@ class RoutingManager:
 
         # Energy factor
         dst_energy = getattr(dst, 'energy', None)
-        e_factor = 1.0 / (dst_energy + 1e-12) if dst_energy is not None else 1.0
+        e_factor = 1.0 / \
+            (dst_energy + 1e-12) if dst_energy is not None else 1.0
 
         # Load factor
         dst_id = getattr(dst, 'id', None)
@@ -143,20 +150,22 @@ class RoutingManager:
         sink_pos = sink.get_position()
         sink_x, sink_y = sink_pos
         dist_to_sink = math.hypot(ch.x - sink_x, ch.y - sink_y)
-        packet_loss_prob = min(0.4, 0.1 + 0.3 * (dist_to_sink / self.comm_range))
+        packet_loss_prob = min(
+            0.4, 0.1 + 0.3 * (dist_to_sink / self.comm_range))
 
         # Create a dummy node for the sink to handle energy calculations
         dummy_sink_node = SensorNode(-1, sink_x, sink_y, init_energy=1e9)
 
         if self.mode == "single-hop" or dist_to_sink <= self.comm_range:
             # Single-hop transmission with retransmission
-            success = self.transmit_with_retransmit(
+            success, attempts = self.transmit_with_retransmit(
                 sender=ch,
                 receiver=dummy_sink_node,
                 data_size=self.energy_model.packet_size,
                 packet_loss_prob=packet_loss_prob,
                 max_attempts=3
             )
+            self.total_retransmissions += (attempts - 1)
             self.update_trust(ch.id, success)
             return success and ch.is_alive()
 
@@ -197,15 +206,18 @@ class RoutingManager:
                 break
 
             # Transmit to the next hop with retransmission
-            dist_tx = math.hypot(current.x - best_candidate.x, current.y - best_candidate.y)
-            packet_loss_prob_hop = min(0.4, 0.1 + 0.3 * (dist_tx / self.comm_range))
-            success = self.transmit_with_retransmit(
+            dist_tx = math.hypot(current.x - best_candidate.x,
+                                 current.y - best_candidate.y)
+            packet_loss_prob_hop = min(
+                0.4, 0.1 + 0.3 * (dist_tx / self.comm_range))
+            success, attempts = self.transmit_with_retransmit(
                 sender=current,
                 receiver=best_candidate,
                 data_size=self.energy_model.packet_size,
                 packet_loss_prob=packet_loss_prob_hop,
                 max_attempts=3
             )
+            self.total_retransmissions += (attempts - 1)
             self.update_trust(current.id, success)
             if success:
                 self.load_count[best_candidate.id] += 1
@@ -217,87 +229,98 @@ class RoutingManager:
 
             if math.hypot(best_candidate.x - sink_x, best_candidate.y - sink_y) <= self.comm_range:
                 # Final hop to sink
-                final_success = self.transmit_with_retransmit(
+                final_success, attempts = self.transmit_with_retransmit(
                     sender=best_candidate,
                     receiver=dummy_sink_node,
                     data_size=self.energy_model.packet_size,
                     packet_loss_prob=packet_loss_prob,
                     max_attempts=3
                 )
+                self.total_retransmissions += (attempts - 1)
                 self.update_trust(best_candidate.id, final_success)
                 return final_success and best_candidate.is_alive()
 
             visited.add(best_candidate.id)
             current = best_candidate
-            current_dist_to_sink = math.hypot(current.x - sink_x, current.y - sink_y)
+            current_dist_to_sink = math.hypot(
+                current.x - sink_x, current.y - sink_y)
             hops += 1
 
         # Fallback: attempt direct transmission to sink if multi-hop fails
-        success = self.transmit_with_retransmit(
+        success, attempts = self.transmit_with_retransmit(
             sender=current,
             receiver=dummy_sink_node,
             data_size=self.energy_model.packet_size,
             packet_loss_prob=packet_loss_prob,
             max_attempts=3
         )
+        self.total_retransmissions += (attempts - 1)
         self.update_trust(current.id, success)
         return success and current.is_alive()
 
     def route_to_ch(
         self,
-        node: 'SensorNode', 
-        cluster_head: 'SensorNode', 
+        node: 'SensorNode',
+        cluster_head: 'SensorNode',
         cluster_members: Optional[List['SensorNode']] = None
-    ):
+    ) -> bool:
         """
         Route data from a cluster member (node) to its cluster head (cluster_head).
         This function handles the CM-to-CH communication, potentially using multi-hop within the cluster.
         It does NOT handle data aggregation energy (Eda) - that is handled by the CH after receiving data.
         """
         if not (node.is_alive() and node.has_known_position()):
-            return
+            return False
         if not (cluster_head.is_alive() and cluster_head.has_known_position()):
-            return
+            return False
 
         dist = node.distance_to(cluster_head)
         packet_loss_prob = min(0.4, 0.1 + 0.3 * (dist / self.comm_range))
 
         if self.mode == "single-hop":
             # Direct transmission from CM to CH
-            success = self.transmit_with_retransmit(
+            success, attempts = self.transmit_with_retransmit(
                 sender=node,
                 receiver=cluster_head,
                 data_size=self.energy_model.packet_size,
                 packet_loss_prob=packet_loss_prob,
                 max_attempts=3
             )
+            self.total_retransmissions += (attempts - 1)
             # Trust updated for the sender (CM)
             self.update_trust(node.id, success)
             # Load updated for the receiver (CH)
             if success and cluster_head.is_alive():
-                 self.load_count[cluster_head.id] += 1
-            return
+                self.load_count[cluster_head.id] += 1
+            return success and node.is_alive() and cluster_head.is_alive()
 
         # Multi-hop transmission within the cluster
         routing_domain = cluster_members if cluster_members is not None else self.nodes
-        routing_domain = [n for n in routing_domain if n.is_alive() and n.has_known_position()]
+        routing_domain = [
+            n for n in routing_domain if n.is_alive() and n.has_known_position()]
 
-        paths = self._find_k_best_paths(node, cluster_head, routing_domain, k=2)
+        paths = self._find_k_best_paths(
+            node, cluster_head, routing_domain, k=2)
         best_path = paths[0]
 
+        if len(best_path) < 2 or best_path[-1].id != cluster_head.id:
+            return False
+
         for i in range(len(best_path) - 1):
-            s, d = best_path[i], best_path[i + 1] # s = sender, d = receiver in this hop
+            # s = sender, d = receiver in this hop
+            s, d = best_path[i], best_path[i + 1]
             if not (s.is_alive() and d.is_alive()):
-                break
+                return False
             dist = s.distance_to(d)
             packet_loss_prob = min(0.4, 0.1 + 0.3 * (dist / self.comm_range))
-            success = self.transmit_with_retransmit(
+            success, attempts = self.transmit_with_retransmit(
                 sender=s,
                 receiver=d,
                 data_size=self.energy_model.packet_size,
                 packet_loss_prob=packet_loss_prob,
                 max_attempts=3
             )
+            self.total_retransmissions += (attempts - 1)
             # Trust updated for the sender of this hop
             self.update_trust(s.id, success)
             # Load updated for the receiver of this hop
@@ -305,7 +328,8 @@ class RoutingManager:
                 self.load_count[d.id] += 1
             # Check if sender died during transmission
             if not s.is_alive():
-                break
+                return False
+        return True
 
     def _find_multihop_path(
         self,
@@ -322,12 +346,13 @@ class RoutingManager:
             neighbors = [
                 n for n in domain
                 if n.id not in visited
-                and n.is_alive()  
+                and n.is_alive()
                 and current.distance_to(n) <= self.comm_range
             ]
             if not neighbors:
                 break
-            next_node = min(neighbors, key=lambda n: self.compute_cost(current, n))
+            next_node = min(
+                neighbors, key=lambda n: self.compute_cost(current, n))
             path.append(next_node)
             visited.add(next_node.id)
             current = next_node

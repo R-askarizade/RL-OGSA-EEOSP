@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Tuple, Optional
 
-import ConfigClass.config 
+import ConfigClass.config
 from ModelClasses.sensor_node import SensorNode
 
 
@@ -13,7 +13,7 @@ class MobileSink:
     def __init__(
         self,
         area_size: Tuple[float, float],
-        mode: str = "eeosp", 
+        mode: str = "eeosp",
         speed: float = 25.0,
         visit_period: int = 5,
         trajectory: Optional[List[Tuple[float, float]]] = None,
@@ -21,7 +21,8 @@ class MobileSink:
         distance_weight: float = 0.4,
     ):
         if mode not in {"fixed", "random", "adaptive", "eeosp"}:
-            raise ValueError("Mode must be 'fixed', 'random', 'adaptive', or 'eeosp'")
+            raise ValueError(
+                "Mode must be 'fixed', 'random', 'adaptive', or 'eeosp'")
         if speed < 0:
             raise ValueError("Speed must be non-negative")
         if visit_period <= 0:
@@ -42,7 +43,8 @@ class MobileSink:
         if self.mode == "fixed" and self.trajectory:
             for i, (x, y) in enumerate(self.trajectory):
                 if not (0 <= x <= area_size[0] and 0 <= y <= area_size[1]):
-                    raise ValueError(f"Trajectory point {i} ({x},{y}) is outside area {area_size}")
+                    raise ValueError(
+                        f"Trajectory point {i} ({x},{y}) is outside area {area_size}")
 
     def _clip_position(self, pos: np.ndarray) -> np.ndarray:
         """Ensure sink stays inside the area."""
@@ -55,7 +57,8 @@ class MobileSink:
 
     def _choose_adaptive_target(self, nodes: List['SensorNode']) -> np.ndarray:
         """Legacy adaptive: move toward low-energy regions."""
-        valid_nodes = [n for n in nodes if n.is_alive() and n.has_known_position()]
+        valid_nodes = [n for n in nodes if n.is_alive()
+                       and n.has_known_position()]
         if not valid_nodes:
             return self.current_pos.copy()
         positions = np.array([[n.x, n.y] for n in valid_nodes])
@@ -93,24 +96,26 @@ class MobileSink:
         best_candidate = self.current_pos.copy()
         best_cost = float('inf')
 
-        max_energy_var = np.var([n.init_energy for n in cluster_heads]) if cluster_heads else 1.0
+        max_energy_var = np.var(
+            [n.init_energy for n in cluster_heads]) if cluster_heads else 1.0
         max_distance = np.linalg.norm([self.area_size[0], self.area_size[1]])
         max_distance_cost = len(ch_positions) * max_distance
 
         for cand in candidates:
             # Compute distance to each CH
             distances = np.linalg.norm(ch_positions - cand, axis=1)
-            
+
             # Energy variance term
             energy_variance = np.var(ch_energies)
             energy_variance_norm = energy_variance / (max_energy_var + 1e-9)
-            
+
             # Distance cost: weighted sum of distances
             distance_cost = np.sum(distances)
             distance_cost_norm = distance_cost / (max_distance_cost + 1e-9)
-            
+
             # Total cost: ε * Var + α * Σ(Weight * Distance)
-            cost = self.energy_weight * energy_variance_norm + self.distance_weight * distance_cost_norm
+            cost = self.energy_weight * energy_variance_norm + \
+                self.distance_weight * distance_cost_norm
 
             if cost < best_cost:
                 best_cost = cost
@@ -149,7 +154,8 @@ class MobileSink:
             ]
             # If no CH flag, assume all nodes are candidates (fallback)
             if not cluster_heads:
-                cluster_heads = [n for n in nodes if n.is_alive() and n.has_known_position()]
+                cluster_heads = [
+                    n for n in nodes if n.is_alive() and n.has_known_position()]
 
         if self.mode == "random":
             self.current_target = self._choose_random_target()

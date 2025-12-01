@@ -2,7 +2,7 @@ import numpy as np
 from typing import List, Dict, Tuple, Optional, Callable
 from collections import defaultdict
 
-import ConfigClass.config 
+import ConfigClass.config
 from ModelClasses.sensor_node import SensorNode
 
 
@@ -18,18 +18,20 @@ class ClusterManager:
         comm_range: float,
         k_min: int = 2,
         k_max: int = 10,
-        head_selection_strategy: str = "optimizer",  # "optimizer", "adaptive" or "random"
+        # "optimizer", "adaptive" or "random"
+        head_selection_strategy: str = "optimizer",
         optimizer_factory=lambda nodes, k, sink: GravitationalOptimizer(
-        nodes=nodes,
-        num_heads=k,
-        sink_pos=sink,
-        iterations=15,
-        population_size=10,
-        use_obl=True, 
+            nodes=nodes,
+            num_heads=k,
+            sink_pos=sink,
+            iterations=15,
+            population_size=10,
+            use_obl=True,
         ),
     ):
-        
-        self.nodes = [n for n in nodes if n.is_alive() and n.has_known_position()]
+
+        self.nodes = [n for n in nodes if n.is_alive()
+                      and n.has_known_position()]
         self.area_size = area_size
         self.comm_range = comm_range
         self.k_min = k_min
@@ -39,7 +41,7 @@ class ClusterManager:
 
         self.clusters: Dict[int, List['SensorNode']] = {}
         self.cluster_heads: List['SensorNode'] = []
-        self.sink_pos: Tuple[float, float] = (0.0, 0.0) 
+        self.sink_pos: Tuple[float, float] = (0.0, 0.0)
 
     def _adaptive_cluster_count(self, sink_pos: Tuple[float, float] = (50, 50)) -> int:
         """Estimate optimal number of clusters based on energy and node density."""
@@ -49,7 +51,7 @@ class ClusterManager:
         e_avg = np.mean([n.energy for n in self.nodes])
         e_init = np.mean([n.init_energy for n in self.nodes])
         density = len(self.nodes) / (self.area_size[0] * self.area_size[1])
-        f_density = min(1.5, max(0.5, density * 1e4)) 
+        f_density = min(1.5, max(0.5, density * 1e4))
 
         k_est = int(self.k_max * (e_avg / e_init) * f_density)
         return max(self.k_min, min(self.k_max, k_est))
@@ -71,7 +73,8 @@ class ClusterManager:
                 return self.nodes
             energies = np.array([n.energy for n in self.nodes])
             probs = energies / np.sum(energies)
-            indices = np.random.choice(len(self.nodes), size=k, replace=False, p=probs)
+            indices = np.random.choice(
+                len(self.nodes), size=k, replace=False, p=probs)
             return [self.nodes[i] for i in indices]
 
     def form_clusters(self, sink_pos: Tuple[float, float] = (50, 50)):
@@ -79,7 +82,7 @@ class ClusterManager:
         Form clusters using the selected strategy.
         :param sink_pos: position of sink/base station (used by some optimizers)
         """
-        self.sink_pos = sink_pos 
+        self.sink_pos = sink_pos
         self.clusters.clear()
         self.cluster_heads.clear()
 
@@ -105,14 +108,14 @@ class ClusterManager:
                         min_dist = d
                         best_head = head
                 except ValueError:
-                    continue 
+                    continue
 
             if best_head is not None:
                 self.clusters.setdefault(best_head.id, []).append(node)
             else:
                 nearest = min(heads, key=lambda h: node.distance_to(h))
                 self.clusters.setdefault(nearest.id, []).append(node)
-                
+
     def get_clusters(self) -> Dict[int, List['SensorNode']]:
         """Return current cluster mapping: {head_id: [members]}."""
         return self.clusters.copy()
