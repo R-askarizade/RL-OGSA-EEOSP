@@ -1,18 +1,19 @@
+from ModelClasses.routing import RoutingManager
+from ModelClasses.mobile_sink import MobileSink
+from ModelClasses.energy_model import EnergyModel
+from ModelClasses.reclustering_policy import ReclusteringPolicy
+from ModelClasses.cluster_manager import ClusterManager
+from ModelClasses.oppositional_gravitational_search import GravitationalOptimizer
+from ModelClasses.sensor_node import SensorNode
+import ConfigClass.config
+
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
 import random
-
-import ConfigClass.config
-from ModelClasses.sensor_node import SensorNode
-from ModelClasses.oppositional_gravitational_search import GravitationalOptimizer
-from ModelClasses.cluster_manager import ClusterManager
-from ModelClasses.reclustering_policy import ReclusteringPolicy
-from ModelClasses.energy_model import EnergyModel
-from ModelClasses.mobile_sink import MobileSink
-from ModelClasses.routing import RoutingManager
 
 
 class Simulation:
@@ -52,11 +53,18 @@ class Simulation:
 
         self.buffer_overflow_count = 0
         self.routing_overhead_bytes = 0
-        self.reclustering_events = []  # list of (trigger_round, resolved_round)
-        self.last_recluster_round = 0 # last round when reclustering occurred
+
+        # list of (trigger_round, resolved_round)
+        self.reclustering_events = []
+        self.last_recluster_round = 0  # last round when reclustering occurred
 
         self.total_data_bytes = 0
         self.total_control_bytes = 0  # already partially tracked as routing_overhead_bytes
+
+        # Movements plots
+        self.sink_trajectory = []     # sink trajectory
+        self.previous_edge_pos = []
+        self.changed_edge_pos = []
 
         # Create sensor nodes
         self.nodes: List[SensorNode] = [
@@ -80,7 +88,12 @@ class Simulation:
             self._voronoi_repulsion_initial_placement()
             edge_ids = self._identify_edge_nodes()
             if edge_ids:
-                self._fine_tune_edge_nodes_with_drl(edge_ids)
+                print(edge_ids)
+                self.edge_node_ids = edge_ids
+                
+                self.previous_edge_pos = [(node.id, (node.x, node.y)) for node in self.nodes if node.id in edge_ids]
+                final_edge_ids = self._fine_tune_edge_nodes_with_drl(edge_ids)
+                self.changed_edge_pos = [(node.id, (node.x, node.y)) for node in self.nodes if node.id in final_edge_ids]
 
         # Mobile sink (velocity = self.sink.speed m/round)
         self.sink = MobileSink(
@@ -142,27 +155,62 @@ class Simulation:
         for node in self.nodes:
             node.schedule_next_data_gen(current_round=0, avg_interval=3)
 
-    def _voronoi_repulsion_initial_placement(self, iterations: int = 100):
-        """Voronoi-inspired repulsion to maximize initial coverage."""
+    def _voronoi_repulsion_initial_placement(self, iterations: int = 20):
+        """
+        Uses Lloyd's Algorithm, based on Voronoi tessellation, to maximize coverage.
+        Which is a more accurate implementation of "Voronoi node deployment".
+        """
+        import numpy as np
+        from scipy.spatial import Voronoi
+
         n = len(self.nodes)
         w, h = self.area_size
+
+        # Add dummy points far outside the area to handle edge cells correctly
+        # This is a common trick to ensure all real nodes have a finite Voronoi cell
+        dummy_points = np.array([
+            [-w, -h], [2*w, -h], [-w, 2*h], [2*w, 2*h],  # Corners
+            [w/2, -h], [w/2, 2*h], [-w, h/2], [2*w, h/2]  # Midpoints
+        ])
+
+        # Initial positions
         positions = np.array([[node.x, node.y] for node in self.nodes])
 
         for _ in range(iterations):
-            new_positions = positions.copy()
+            # 1. Compute the Voronoi diagram
+            # Combine real points with dummy points
+            all_points = np.vstack([positions, dummy_points])
+            vor = Voronoi(all_points)
+
+            new_positions = np.zeros_like(positions)
+
+            # 2. For each real node, find the centroid of its Voronoi cell
             for i in range(n):
-                repulsion = np.zeros(2)
-                for j in range(n):
-                    if i == j:
-                        continue
-                    diff = positions[i] - positions[j]
-                    dist = np.linalg.norm(diff)
-                    if dist > 1.0:
-                        repulsion += diff / (dist ** 2)
-                new_positions[i] += repulsion * 0.5
-                new_positions[i] = np.clip(new_positions[i], [0, 0], [w, h])
+                region_index = vor.point_region[i]
+                region = vor.regions[region_index]
+
+                # A region can be unbounded or empty if the point is on the convex hull.
+                # The dummy points help, but we still need to handle it.
+                if not region or -1 in region:
+                    # If the cell is unbounded, just use the old position or a slight random jitter
+                    # to avoid getting stuck on the edge. A better solution might involve clipping.
+                    new_positions[i] = positions[i]
+                    continue
+
+                # Get the vertices of the cell
+                polygon = vor.vertices[region]
+
+                # 3. Move the node to the centroid of its cell
+                # A simple average of vertices works as a good approximation for the centroid.
+                # For a more precise centroid, a polygon area formula should be used.
+                centroid = polygon.mean(axis=0)
+
+                # 4. Clip to the boundaries
+                new_positions[i] = np.clip(centroid, [0, 0], [w, h])
+
             positions = new_positions
 
+        # Update the final positions of the node objects
         for i, node in enumerate(self.nodes):
             node.x, node.y = float(positions[i, 0]), float(positions[i, 1])
 
@@ -178,49 +226,246 @@ class Simulation:
                 edge_ids.append(node.id)
         return edge_ids
 
-    def _compute_reward(self) -> float:
-        """Compute reward based on coverage, energy fairness, and distance to sink."""
+    def _compute_reward(self, changed_node_id: Optional[int] = None) -> float:
+        """
+        Compute reward based on coverage, connectivity, and edge coverage.
+        If changed_node_id is provided, focus on local improvement metrics.
+        """
         if not self.nodes:
             return 0.0
 
-        # 1. Coverage
-        grid_size = 20
+        # 1. Coverage (grid-based)
+        grid_size = 40  # Increased resolution for better sensitivity
         covered_cells = 0
         for gx in np.linspace(0, self.area_size[0], grid_size):
             for gy in np.linspace(0, self.area_size[1], grid_size):
-                if any(np.hypot(n.x - gx, n.y - gy) <= self.comm_range for n in self.nodes if n.is_alive()):
+                if any(np.hypot(n.x - gx, n.y - gy) <= self.comm_range
+                       for n in self.nodes if n.is_alive()):
                     covered_cells += 1
         coverage = covered_cells / (grid_size * grid_size)
 
-        # 2. Energy fairness
-        energies = [n.energy for n in self.nodes if n.is_alive()]
-        energy_std = np.std(energies) if energies else 0
-        fairness = 1.0 / (1.0 + energy_std)
+        # 2. Edge coverage (coverage near boundaries)
+        edge_margin = self.comm_range * 0.5
+        edge_covered = 0
+        edge_total = 0
+        for gx in np.linspace(0, self.area_size[0], grid_size):
+            for gy in np.linspace(0, self.area_size[1], grid_size):
+                # Check if point is near boundary
+                if (gx < edge_margin or gx > self.area_size[0] - edge_margin or
+                        gy < edge_margin or gy > self.area_size[1] - edge_margin):
+                    edge_total += 1
+                    if any(np.hypot(n.x - gx, n.y - gy) <= self.comm_range
+                           for n in self.nodes if n.is_alive()):
+                        edge_covered += 1
 
-        return 0.6 * coverage + 0.3 * fairness
+        edge_coverage = edge_covered / max(1, edge_total)
 
-    def _fine_tune_edge_nodes_with_drl(self, edge_node_ids: List[int]):
+        # 3. Connectivity (average neighbors)
+        positions = np.array([[n.x, n.y] for n in self.nodes if n.is_alive()])
+        if len(positions) > 1:
+            neighbor_counts = []
+            for i, node in enumerate(self.nodes):
+                if node.is_alive():
+                    distances = np.linalg.norm(
+                        positions - positions[i], axis=1)
+                    neighbor_count = np.sum(
+                        distances <= self.comm_range) - 1  # Exclude self
+                    neighbor_counts.append(neighbor_count)
+
+            avg_neighbors = np.mean(neighbor_counts)
+            min_neighbors = np.min(neighbor_counts)
+            # Penalize if any node is isolated or poorly connected
+            connectivity_score = min(
+                1.0, (min_neighbors / 3.0) * (avg_neighbors / 5.0))
+        else:
+            connectivity_score = 0.0
+
+        # 4. Node distribution uniformity (inverse of clustering coefficient)
+        if len(positions) > 1:
+            # Compute pairwise distances
+            from scipy.spatial.distance import pdist
+            distances = pdist(positions)
+            distance_std = np.std(distances)
+            distance_mean = np.mean(distances)
+            uniformity = 1.0 / \
+                (1.0 + (distance_std / max(distance_mean, 1e-6)))
+        else:
+            uniformity = 0.0
+
+        # Weighted combination
+        reward = (
+            0.35 * coverage +           # Overall coverage
+            # Edge/boundary coverage (important for edge nodes)
+            0.30 * edge_coverage +
+            0.20 * connectivity_score +  # Network connectivity
+            0.15 * uniformity           # Spatial uniformity
+        )
+
+        return reward
+
+    def _compute_local_reward(self, node_id: int) -> float:
         """
-        Use Q-learning to fine-tune ONLY edge node positions.
-        Simplified for efficiency: single episode, greedy action.
+        Compute localized reward for a specific node.
+        Which is more sensitive to individual node movements.
         """
-        for node_id in edge_node_ids:
-            node_idx = node_id
-            old_x, old_y = self.nodes[node_idx].x, self.nodes[node_idx].y
+        node = self.nodes[node_id]
+        if not node.is_alive():
+            return 0.0
 
-            dx = np.random.uniform(-5, 5)
-            dy = np.random.uniform(-5, 5)
+        # 1. Local coverage contribution
+        grid_size = 20
+        local_coverage = 0
+        search_radius = self.comm_range * 1.5  # Look in expanded neighborhood
 
-            new_x = np.clip(old_x + dx, 0, self.area_size[0])
-            new_y = np.clip(old_y + dy, 0, self.area_size[1])
-            self.nodes[node_idx].x, self.nodes[node_idx].y = new_x, new_y
+        for gx in np.linspace(max(0, node.x - search_radius),
+                              min(self.area_size[0], node.x + search_radius), grid_size):
+            for gy in np.linspace(max(0, node.y - search_radius),
+                                  min(self.area_size[1], node.y + search_radius), grid_size):
+                dist = np.hypot(node.x - gx, node.y - gy)
+                if dist <= self.comm_range:
+                    local_coverage += 1
 
-            new_reward = self._compute_reward()
-            old_reward = self._compute_reward()
-            if new_reward < old_reward:
-                self.nodes[node_idx].x, self.nodes[node_idx].y = old_x, old_y
+        local_coverage_score = local_coverage / (grid_size * grid_size)
 
-        print(f"[Placement] Edge nodes fine-tuned. Reward re-evaluated.")
+        # 2. Connectivity (number of neighbors)
+        positions = np.array([[n.x, n.y] for n in self.nodes if n.is_alive()])
+        distances = np.linalg.norm(
+            positions - np.array([node.x, node.y]), axis=1)
+        neighbor_count = np.sum(
+            distances <= self.comm_range) - 1  # Exclude self
+
+        # Normalize by expected neighbors (5-8 is good)
+        connectivity_score = min(1.0, neighbor_count / 6.0)
+
+        # 3. Distance to nearest boundary (edge nodes should be near boundaries)
+        dist_to_boundary = min(
+            node.x,
+            self.area_size[0] - node.x,
+            node.y,
+            self.area_size[1] - node.y
+        )
+        # Reward being closer to boundary (for edge nodes)
+        boundary_score = 1.0 - \
+            min(1.0, dist_to_boundary / (self.comm_range * 2))
+
+        # 4. Overlap penalty (avoid being too close to other nodes)
+        min_distance = np.min(distances[distances > 0]) if len(
+            distances) > 1 else self.comm_range
+        overlap_penalty = max(
+            0.0, 1.0 - (min_distance / (self.comm_range * 0.3)))
+
+        reward = (
+            0.30 * local_coverage_score +
+            0.25 * connectivity_score +
+            0.30 * boundary_score +
+            0.15 * (1.0 - overlap_penalty)
+        )
+
+        return reward
+
+    def _fine_tune_edge_nodes_with_drl(self, edge_node_ids: List[int], iterations: int = 20):
+        """
+        Use reinforcement learning to fine-tune edge node positions.
+        This implementation uses a proper reward-based optimization.
+        """
+        learning_rate = 0.1
+        epsilon = 0.3  # Exploration rate
+        changes = []
+
+        print(f"[DRL] Fine-tuning {len(edge_node_ids)} edge nodes...")
+
+        for iteration in range(iterations):
+            improved = 0
+
+            for node_id in edge_node_ids:
+                node_idx = node_id
+
+                # Store old position
+                old_x, old_y = self.nodes[node_idx].x, self.nodes[node_idx].y
+
+                # Compute old reward (both global and local)
+                old_global_reward = self._compute_reward()
+                old_local_reward = self._compute_local_reward(node_id)
+                old_combined_reward = 0.4 * old_global_reward + 0.6 * old_local_reward
+
+                # Epsilon-greedy exploration
+                if np.random.random() < epsilon:
+                    # Exploration: larger random move
+                    dx = np.random.uniform(-self.comm_range *
+                                           0.5, self.comm_range * 0.5)
+                    dy = np.random.uniform(-self.comm_range *
+                                           0.5, self.comm_range * 0.5)
+                else:
+                    # Exploitation: smaller, directed move
+                    # Move toward boundary if not close enough
+                    move_direction = np.random.choice(
+                        ['toward_boundary', 'random'])
+
+                    if move_direction == 'toward_boundary':
+                        # Determine which boundary is closest
+                        distances_to_boundaries = [
+                            old_x,                          # left
+                            self.area_size[0] - old_x,     # right
+                            old_y,                          # bottom
+                            self.area_size[1] - old_y      # top
+                        ]
+                        closest_boundary = np.argmin(distances_to_boundaries)
+
+                        # Move toward that boundary
+                        step_size = np.random.uniform(5, 15)
+                        if closest_boundary == 0:  # Move left
+                            dx = -step_size
+                            dy = np.random.uniform(-5, 5)
+                        elif closest_boundary == 1:  # Move right
+                            dx = step_size
+                            dy = np.random.uniform(-5, 5)
+                        elif closest_boundary == 2:  # Move down
+                            dx = np.random.uniform(-5, 5)
+                            dy = -step_size
+                        else:  # Move up
+                            dx = np.random.uniform(-5, 5)
+                            dy = step_size
+                    else:
+                        dx = np.random.uniform(-10, 10)
+                        dy = np.random.uniform(-10, 10)
+
+                # Apply move with clipping
+                new_x = np.clip(old_x + dx, 0, self.area_size[0])
+                new_y = np.clip(old_y + dy, 0, self.area_size[1])
+
+                # Temporarily apply new position
+                self.nodes[node_idx].x, self.nodes[node_idx].y = new_x, new_y
+
+                # Compute new reward
+                new_global_reward = self._compute_reward()
+                new_local_reward = self._compute_local_reward(node_id)
+                new_combined_reward = 0.4 * new_global_reward + 0.6 * new_local_reward
+
+                # Decide whether to keep the move
+                reward_improvement = new_combined_reward - old_combined_reward
+
+                if reward_improvement > 0 or (reward_improvement > -0.01 and np.random.random() < 0.1):
+                    # Accept improvement or small degradation with small probability (simulated annealing)
+                    if node_id not in changes:
+                        changes.append(node_id)
+                    improved += 1
+                else:
+                    # Reject move
+                    self.nodes[node_idx].x, self.nodes[node_idx].y = old_x, old_y
+
+            # Decay epsilon (less exploration over time)
+            epsilon *= 0.95
+
+            if iteration % 10 == 0:
+                final_reward = self._compute_reward()
+                print(f"  Iteration {iteration}: {improved}/{len(edge_node_ids)} nodes improved, "
+                      f"Global Reward: {final_reward:.4f}")
+
+        final_reward = self._compute_reward()
+        print(f"[DRL] Optimization complete. Final reward: {final_reward:.4f}, "
+              f"{len(changes)} nodes changed position.")
+
+        return changes
 
     def _apply_control_packet_cost(self):
         """
@@ -292,27 +537,36 @@ class Simulation:
             # Update mobile sink
             self.sink.update_position(r, self.nodes)
 
+            # Add this to plot MS movements
+            self.sink_trajectory.append(self.sink.get_position())
+
             # Check for reclustering
-            should_recluster, _ = self.reclustering_policy.should_recluster(r, self.sink.get_position())
+            should_recluster, _ = self.reclustering_policy.should_recluster(
+                r, self.sink.get_position())
             if should_recluster:
-                self.cluster_manager.form_clusters(sink_pos=self.sink.get_position())
+                self.cluster_manager.form_clusters(
+                    sink_pos=self.sink.get_position())
                 self._apply_control_packet_cost()
-                self.reclustering_policy.update_after_recluster(r, self.sink.get_position())
+                self.reclustering_policy.update_after_recluster(
+                    r, self.sink.get_position())
                 # Record reconfiguration trigger
                 self.current_recluster_trigger = r
                 self.routing.reset_loads()  # reset loads after reclustering
 
-            ch_ids = {ch.id for ch in self.cluster_manager.cluster_heads if ch.is_alive()}
-            nodes_to_send = [n for n in alive_nodes if n.next_data_gen_round <= r and n.id not in ch_ids]
+            ch_ids = {
+                ch.id for ch in self.cluster_manager.cluster_heads if ch.is_alive()}
+            nodes_to_send = [
+                n for n in alive_nodes if n.next_data_gen_round <= r and n.id not in ch_ids]
 
             delivered_this_round = 0
 
             if nodes_to_send:
                 self.total_generated += len(nodes_to_send)
-    
+
                 # Increment Data Bytes When Packets Are Generated
                 data_bytes_per_packet = self.energy_model.packet_size // 8
-                self.total_data_bytes += len(nodes_to_send) * data_bytes_per_packet
+                self.total_data_bytes += len(nodes_to_send) * \
+                    data_bytes_per_packet
 
                 # Generate packets BEFORE routing
                 for node in nodes_to_send:
@@ -342,14 +596,17 @@ class Simulation:
                         success = self.routing.route_to_ch(node, ch, members)
                         if success and ch.is_alive():
                             # Check buffer space BEFORE adding
-                            available_space = ch.buffer_size - len(ch.buffered_packets)
+                            available_space = ch.buffer_size - \
+                                len(ch.buffered_packets)
                             if available_space > 0:
                                 to_buffer = node.pending_packets[:available_space]
-                                dropped = len(node.pending_packets) - len(to_buffer)
+                                dropped = len(
+                                    node.pending_packets) - len(to_buffer)
                                 ch.buffered_packets.extend(to_buffer)
                                 self.buffer_overflow_count += dropped
                             else:
-                                self.buffer_overflow_count += len(node.pending_packets)
+                                self.buffer_overflow_count += len(
+                                    node.pending_packets)
                             node.pending_packets.clear()
                         # else: keep packets in pending_packets for retransmission
 
@@ -366,7 +623,8 @@ class Simulation:
                         # Record reconfiguration resolution if needed
                         if hasattr(self, 'current_recluster_trigger'):
                             resolve_round = r
-                            reconfig_time_sec = (resolve_round - self.current_recluster_trigger) * self.round_duration_sec
+                            reconfig_time_sec = (
+                                resolve_round - self.current_recluster_trigger) * self.round_duration_sec
                             self.reclustering_events.append(reconfig_time_sec)
                             delattr(self, 'current_recluster_trigger')
                         num_packets = len(ch.buffered_packets)
@@ -384,7 +642,8 @@ class Simulation:
 
             # Log per-round results
             alive_count = len([n for n in self.nodes if n.is_alive()])
-            avg_energy = np.mean([n.energy for n in self.nodes if n.is_alive()]) if alive_count > 0 else 0.0
+            avg_energy = np.mean(
+                [n.energy for n in self.nodes if n.is_alive()]) if alive_count > 0 else 0.0
             self.results["round"].append(r)
             self.results["alive"].append(alive_count)
             self.results["avg_energy"].append(avg_energy)
@@ -414,7 +673,8 @@ class Simulation:
                 # Coverage (CA)
                 grid_size = 20
                 covered = sum(
-                    any(np.hypot(n.x - gx, n.y - gy) <= self.comm_range for n in self.nodes if n.is_alive())
+                    any(np.hypot(n.x - gx, n.y - gy) <=
+                        self.comm_range for n in self.nodes if n.is_alive())
                     for gx in np.linspace(0, self.area_size[0], grid_size)
                     for gy in np.linspace(0, self.area_size[1], grid_size)
                 )
@@ -439,28 +699,34 @@ class Simulation:
                     mu_E, sigma_E = np.mean(energies), np.std(energies)
                     LB = 1 - (sigma_E / max(mu_E, 1e-9))
                 if energies:
-                    FI = (sum(energies) ** 2) / (len(energies) * sum(e ** 2 for e in energies))
+                    FI = (sum(energies) ** 2) / (len(energies)
+                                                 * sum(e ** 2 for e in energies))
 
                 CE = CA / max(1e-9, EC)
 
                 # E2E Delay
-                avg_delay_rounds = self.total_e2e_delay / self.delivered_packet_count if self.delivered_packet_count > 0 else 0.0
+                avg_delay_rounds = self.total_e2e_delay / \
+                    self.delivered_packet_count if self.delivered_packet_count > 0 else 0.0
                 avg_delay_sec = avg_delay_rounds * self.round_duration_sec
 
                 # Advanced Metrics
                 total_time_sec = r * self.round_duration_sec
                 TH_pps = self.total_delivered / total_time_sec if total_time_sec > 0 else 0.0
-                EE_joule_sec = self.total_delivered / (EC * total_time_sec) if (EC > 0 and total_time_sec > 0) else 0.0
+                EE_joule_sec = self.total_delivered / \
+                    (EC * total_time_sec) if (EC >
+                                              0 and total_time_sec > 0) else 0.0
 
                 # Buffer Overflow Rate (%)
-                buffer_overflow_rate = (self.buffer_overflow_count / self.total_generated) * 100 if self.total_generated > 0 else 0.0
+                buffer_overflow_rate = (
+                    self.buffer_overflow_count / self.total_generated) * 100 if self.total_generated > 0 else 0.0
 
                 # Routing Overhead (bytes) — assumed from control packets
                 routing_overhead = getattr(self, 'routing_overhead_bytes', 0)
 
                 # Traffic Load (%)
                 total_tx = sum(n.packets_sent for n in self.nodes)
-                traffic_load_pct = (total_tx / (self.n_nodes * r)) * 100 if r > 0 else 0.0
+                traffic_load_pct = (
+                    total_tx / (self.n_nodes * r)) * 100 if r > 0 else 0.0
 
                 # Normalized Overhead
                 total_traffic_bytes = self.total_control_bytes + self.total_data_bytes
@@ -469,7 +735,7 @@ class Simulation:
                     if total_traffic_bytes > 0
                     else 0.0
                 )
-                
+
                 # Record all
                 self.detailed_metrics["round"].append(r)
                 self.detailed_metrics["EC"].append(EC)
@@ -485,13 +751,17 @@ class Simulation:
                 self.detailed_metrics["LB"].append(LB)
                 self.detailed_metrics["FI"].append(FI)
                 self.detailed_metrics["CE"].append(CE)
-                self.detailed_metrics["E2E_Delay_Rounds"].append(avg_delay_rounds)
+                self.detailed_metrics["E2E_Delay_Rounds"].append(
+                    avg_delay_rounds)
                 self.detailed_metrics["E2E_Delay_Sec"].append(avg_delay_sec)
-                self.detailed_metrics["Buffer_Overflow_Rate"].append(buffer_overflow_rate)
-                self.detailed_metrics["Routing_Overhead_Bytes"].append(routing_overhead)
-                self.detailed_metrics["Traffic_Load_Pct"].append(traffic_load_pct)
-                self.detailed_metrics["Overhead_Normalized"].append(overhead_normalized)
-
+                self.detailed_metrics["Buffer_Overflow_Rate"].append(
+                    buffer_overflow_rate)
+                self.detailed_metrics["Routing_Overhead_Bytes"].append(
+                    routing_overhead)
+                self.detailed_metrics["Traffic_Load_Pct"].append(
+                    traffic_load_pct)
+                self.detailed_metrics["Overhead_Normalized"].append(
+                    overhead_normalized)
 
         # Final metrics
         self.metrics = {
