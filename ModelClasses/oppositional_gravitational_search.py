@@ -20,7 +20,7 @@ class GravitationalOptimizer:
         population_size: int = 10,
         alpha: float = 0.6,
         beta: float = 0.4,
-        G0: float = 100.0,
+        G0: float = 50.0,
         use_obl: bool = True,
         K0: int = None,
     ):

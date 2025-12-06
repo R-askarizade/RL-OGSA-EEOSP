@@ -17,8 +17,8 @@ class MobileSink:
         speed: float = 25.0,
         visit_period: int = 5,
         trajectory: Optional[List[Tuple[float, float]]] = None,
-        energy_weight: float = 0.6,
-        distance_weight: float = 0.4,
+        energy_weight: float = 0.4,
+        distance_weight: float = 0.6,
     ):
         if mode not in {"fixed", "random", "adaptive", "eeosp"}:
             raise ValueError(

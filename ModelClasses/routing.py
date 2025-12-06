@@ -19,9 +19,9 @@ class RoutingManager:
         energy_model: 'EnergyModel',
         mode: str = "multi-hop",
         weight_distance: float = 0.5,
-        weight_energy: float = 0.3,
-        weight_load: float = 0.1,
-        weight_trust: float = 0.1,
+        weight_energy: float = 0.2,
+        weight_load: float = 0.15,
+        weight_trust: float = 0.15,
         comm_range: float = 40.0,
         multipath: bool = True,
     ):

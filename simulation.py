@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional
 from collections import defaultdict
 import random
+from scipy.spatial import Voronoi
 
 
 class Simulation:
@@ -30,14 +31,32 @@ class Simulation:
         rounds: int = 4000,
         init_energy: float = 1.0,
         comm_range: float = 50.0,
-        recluster_period: int = 50,
         sink_mode: str = "adaptive",
-        sink_visit_period: int = 5,
         routing_mode: str = "multi-hop",
         seed: Optional[int] = 42,
         localization_mode: str = "DRL",
         head_selection_strategy: str = "optimizer",
         round_duration_sec: float = 50.0,  # 1 round = 50 seconds
+
+        weight_distance: float = 0.5,
+        weight_energy: float = 0.3,
+        weight_load: float = 0.1,
+        weight_trust: float = 0.1,
+
+        recluster_period: int = 75,
+        energy_threshold: float = 0.1,
+        load_threshold: int = 10,
+        sink_move_threshold: float = 20.0,
+
+        go_iterations: int = 15,
+        population_size: int = 10,
+        alpha: float = 0.6,
+        G0: float = 50.0,
+        beta: float = 0.4,
+
+        energy_weight: float = 0.4,
+        distance_weight: float = 0.6,
+        visit_period: int = 5
     ):
         if seed is not None:
             np.random.seed(seed)
@@ -48,9 +67,34 @@ class Simulation:
         self.rounds = rounds
         self.init_energy = init_energy
         self.comm_range = comm_range
-        self.recluster_period = recluster_period
         self.round_duration_sec = round_duration_sec  # seconds per round
+        self.sink_mode = sink_mode
+        self.routing_mode = routing_mode
+        self.localization_mode = localization_mode
+        self.head_selection_strategy = head_selection_strategy
 
+        # Routing parameters
+        self.weight_distance = weight_distance
+        self.weight_energy = weight_energy
+        self.weight_load = weight_load
+        self.weight_trust = weight_trust
+        # Reclustering parameters
+        self.recluster_period = recluster_period
+        self.energy_threshold = energy_threshold
+        self.load_threshold = load_threshold
+        self.sink_move_threshold = sink_move_threshold
+        # Gravitational search parameters
+        self.go_iterations = go_iterations
+        self.population_size = population_size
+        self.alpha = alpha
+        self.beta = beta
+        self.G0 = G0
+        # Mobile Sink parameters
+        self.visit_period = visit_period
+        self.energy_weight = energy_weight
+        self.distance_weight = distance_weight
+
+        # Overhead and buffer overflow metrics
         self.buffer_overflow_count = 0
         self.routing_overhead_bytes = 0
 
@@ -72,9 +116,9 @@ class Simulation:
                 i,
                 x=float(np.random.rand() * area_size[0]),
                 y=float(np.random.rand() * area_size[1]),
-                init_energy=init_energy,
-                comm_range=comm_range,
-                area_size=area_size,
+                init_energy=self.init_energy,
+                comm_range=self.comm_range,
+                area_size=self.area_size,
             )
             for i in range(n_nodes)
         ]
@@ -90,17 +134,21 @@ class Simulation:
             if edge_ids:
                 print(edge_ids)
                 self.edge_node_ids = edge_ids
-                
-                self.previous_edge_pos = [(node.id, (node.x, node.y)) for node in self.nodes if node.id in edge_ids]
+
+                self.previous_edge_pos = [
+                    (node.id, (node.x, node.y)) for node in self.nodes if node.id in edge_ids]
                 final_edge_ids = self._fine_tune_edge_nodes_with_drl(edge_ids)
-                self.changed_edge_pos = [(node.id, (node.x, node.y)) for node in self.nodes if node.id in final_edge_ids]
+                self.changed_edge_pos = [(node.id, (node.x, node.y))
+                                         for node in self.nodes if node.id in final_edge_ids]
 
         # Mobile sink (velocity = self.sink.speed m/round)
         self.sink = MobileSink(
-            area_size=area_size,
-            mode=sink_mode,
+            area_size=self.area_size,
+            mode=self.sink_mode,
             speed=25.0,  # meters per round
-            visit_period=sink_visit_period,
+            visit_period=self.visit_period,
+            energy_weight=self.energy_weight,
+            distance_weight=self.distance_weight
         )
         print(f"[Info] Sink speed: {self.sink.speed} m/round = "
               f"{self.sink.speed / self.round_duration_sec:.2f} m/s")
@@ -109,20 +157,25 @@ class Simulation:
         self.energy_model = EnergyModel(packet_size=4000)
         self.cluster_manager = ClusterManager(
             nodes=self.nodes,
-            area_size=area_size,
-            comm_range=comm_range,
+            area_size=self.area_size,
+            comm_range=self.comm_range,
             k_min=8,
             k_max=20,
-            head_selection_strategy=head_selection_strategy,
+            head_selection_strategy=self.head_selection_strategy,
             optimizer_factory=lambda nodes, k, sink: GravitationalOptimizer(
-                nodes=nodes, num_heads=k, sink_pos=sink, iterations=15, population_size=10
+                nodes=nodes, num_heads=k, sink_pos=sink,
+                iterations=self.go_iterations, population_size=self.population_size,
+                alpha=self.alpha, beta=self.beta, G0=self.G0
             ),
         )
         self.cluster_manager.sink_pos = self.sink.get_position()
 
         self.reclustering_policy = ReclusteringPolicy(
             cm=self.cluster_manager,
-            recluster_period=recluster_period,
+            recluster_period=self.recluster_period,
+            energy_threshold=self.energy_threshold,
+            load_threshold=self.load_threshold,
+            sink_move_threshold=self.sink_move_threshold,
             enable_time=True,
             enable_energy=True,
             enable_load=True,
@@ -132,8 +185,12 @@ class Simulation:
         self.routing = RoutingManager(
             nodes=self.nodes,
             energy_model=self.energy_model,
-            mode=routing_mode,
-            comm_range=comm_range,
+            mode=self.routing_mode,
+            comm_range=self.comm_range,
+            weight_distance=self.weight_distance,
+            weight_energy=self.weight_energy,
+            weight_load=self.weight_load,
+            weight_trust=self.weight_trust
         )
 
         # Metrics
@@ -155,19 +212,16 @@ class Simulation:
         for node in self.nodes:
             node.schedule_next_data_gen(current_round=0, avg_interval=3)
 
-    def _voronoi_repulsion_initial_placement(self, iterations: int = 20):
+    def _voronoi_repulsion_initial_placement(self, iterations: int = 10):
         """
         Uses Lloyd's Algorithm, based on Voronoi tessellation, to maximize coverage.
         Which is a more accurate implementation of "Voronoi node deployment".
         """
-        import numpy as np
-        from scipy.spatial import Voronoi
 
         n = len(self.nodes)
         w, h = self.area_size
 
         # Add dummy points far outside the area to handle edge cells correctly
-        # This is a common trick to ensure all real nodes have a finite Voronoi cell
         dummy_points = np.array([
             [-w, -h], [2*w, -h], [-w, 2*h], [2*w, 2*h],  # Corners
             [w/2, -h], [w/2, 2*h], [-w, h/2], [2*w, h/2]  # Midpoints
@@ -190,19 +244,14 @@ class Simulation:
                 region = vor.regions[region_index]
 
                 # A region can be unbounded or empty if the point is on the convex hull.
-                # The dummy points help, but we still need to handle it.
                 if not region or -1 in region:
-                    # If the cell is unbounded, just use the old position or a slight random jitter
-                    # to avoid getting stuck on the edge. A better solution might involve clipping.
+                    # If the cell is unbounded, just use the old position or a slight random jitter.
                     new_positions[i] = positions[i]
                     continue
 
-                # Get the vertices of the cell
                 polygon = vor.vertices[region]
 
                 # 3. Move the node to the centroid of its cell
-                # A simple average of vertices works as a good approximation for the centroid.
-                # For a more precise centroid, a polygon area formula should be used.
                 centroid = polygon.mean(axis=0)
 
                 # 4. Clip to the boundaries
@@ -214,7 +263,7 @@ class Simulation:
         for i, node in enumerate(self.nodes):
             node.x, node.y = float(positions[i, 0]), float(positions[i, 1])
 
-    def _identify_edge_nodes(self, edge_threshold: float = 0.2) -> List[int]:
+    def _identify_edge_nodes(self, edge_threshold: float = 0.4) -> List[int]:
         """Identify edge nodes based on neighbor count."""
         edge_ids = []
         positions = np.array([[n.x, n.y] for n in self.nodes])

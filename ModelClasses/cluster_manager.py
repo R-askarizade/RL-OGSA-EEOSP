@@ -16,6 +16,7 @@ class ClusterManager:
         nodes: List['SensorNode'],
         area_size: Tuple[float, float],
         comm_range: float,
+        # TODO: SAY EXPLANATION OF CHOOSING THESE NUMBERS
         k_min: int = 2,
         k_max: int = 10,
         # "optimizer", "adaptive" or "random"

@@ -28,9 +28,7 @@ def plot_comparison(sims: List['Simulation'], labels: List[str], show: bool = Tr
         ("delivered_cum", "Cumulative Delivered Packets"),
         ("PDR", "Packet Delivery Ratio"),
         ("EC", "Energy Consumption"),
-        ("TH", "Throughput"),
-        ("TH_pps", "Throughput (packets/sec)"),
-        ("EE_Js", "Energy Efficiency (packets/(J·s))"),
+        ("TH", "Throughput")
     ]
 
     for idx, (metric_key, title) in enumerate(metrics_to_plot, 1):
@@ -59,7 +57,7 @@ def plot_comparison(sims: List['Simulation'], labels: List[str], show: bool = Tr
         plt.show()
 
 
-def visualize_deployment(sim: "Simulation", save_path: str = r"D:\Papers\4) Finished Articles\6. MWSN - DCHPC\DCHPC", show: bool = False):
+def visualize_deployment(sim: "Simulation", save_path: str = r"DCHPC", show: bool = False):
     # Academic font settings
     plt.rcParams.update({
         'font.family': 'serif',
@@ -270,8 +268,9 @@ def visualize_deployment(sim: "Simulation", save_path: str = r"D:\Papers\4) Fini
                        markerfacecolor='red', markersize=10, label='Cluster Head'),
             plt.Line2D([], [], marker='p', color='w',
                        markerfacecolor='purple', markersize=10, label='Mobile Sink'),
-            ]
-        ax.legend(handles=legend_elements, loc='lower right', bbox_to_anchor=(1.0, -0.1))
+        ]
+        ax.legend(handles=legend_elements, loc='lower right',
+                  bbox_to_anchor=(1.0, -0.1))
         ax.grid(True, alpha=0.3)
         plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label='Coverage')
 
