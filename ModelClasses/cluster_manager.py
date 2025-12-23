@@ -1,9 +1,5 @@
 import numpy as np
-from typing import List, Dict, Tuple, Optional, Callable
-from collections import defaultdict
-
-import ConfigClass.config
-from ModelClasses.sensor_node import SensorNode
+from typing import List, Dict, Tuple
 
 
 class ClusterManager:

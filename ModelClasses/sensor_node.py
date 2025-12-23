@@ -2,7 +2,6 @@ from typing import Optional, List, Tuple, Union
 import math
 import random
 
-import ConfigClass.config
 
 
 class SensorNode:

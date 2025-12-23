@@ -1,9 +1,6 @@
 import numpy as np
 from typing import List, Tuple, Optional
 
-import ConfigClass.config
-from ModelClasses.cluster_manager import ClusterManager
-
 
 class ReclusteringPolicy:
     """

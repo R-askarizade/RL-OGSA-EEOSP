@@ -1,11 +1,8 @@
 import numpy as np
 import math
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional
 
-import ConfigClass.config
-from ModelClasses.sensor_node import SensorNode
-from ModelClasses.energy_model import EnergyModel
-from ModelClasses.mobile_sink import MobileSink
+from sensor_node import SensorNode
 
 
 class RoutingManager:
@@ -58,7 +55,7 @@ class RoutingManager:
         data_size: int,
         packet_loss_prob: float,
         max_attempts: int = 3
-    ) -> bool:
+    ) -> tuple[bool, int]:
         """
         # TODO -> FILL DOCUMENTATIONS
         """
@@ -71,12 +68,12 @@ class RoutingManager:
 
             self.energy_model.consume_tx(sender, dist, data_size)
             if not sender.is_alive():
-                return False
+                return False, attempt
 
             if isinstance(receiver, SensorNode):
                 self.energy_model.consume_rx(receiver, data_size)
                 if not receiver.is_alive():
-                    return False
+                    return False, attempt
 
             # Energy consumption for routing
             if np.random.rand() > packet_loss_prob:
@@ -228,12 +225,16 @@ class RoutingManager:
                 return False
 
             if math.hypot(best_candidate.x - sink_x, best_candidate.y - sink_y) <= self.comm_range:
-                # Final hop to sink
+                # Final hop to sink — recompute loss prob for THIS link
+                dist_final = math.hypot(
+                    best_candidate.x - sink_x, best_candidate.y - sink_y)
+                packet_loss_prob_final = min(
+                    0.4, 0.1 + 0.3 * (dist_final / self.comm_range))
                 final_success, attempts = self.transmit_with_retransmit(
                     sender=best_candidate,
                     receiver=dummy_sink_node,
                     data_size=self.energy_model.packet_size,
-                    packet_loss_prob=packet_loss_prob,
+                    packet_loss_prob=packet_loss_prob_final,
                     max_attempts=3
                 )
                 self.total_retransmissions += (attempts - 1)

@@ -1,9 +1,6 @@
 import numpy as np
 from typing import List, Tuple, Optional
 
-import ConfigClass.config
-from ModelClasses.sensor_node import SensorNode
-
 
 class MobileSink:
     """

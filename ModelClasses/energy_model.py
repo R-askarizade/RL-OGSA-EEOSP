@@ -1,9 +1,6 @@
 import numpy as np
 from dataclasses import dataclass
 
-import ConfigClass.config
-from ModelClasses.sensor_node import SensorNode
-
 
 @dataclass
 class EnergyModel:

@@ -2,9 +2,6 @@ import numpy as np
 import random as pyrand
 from typing import List, Tuple, Dict
 
-import ConfigClass.config
-from ModelClasses.sensor_node import SensorNode
-
 
 class GravitationalOptimizer:
     """
