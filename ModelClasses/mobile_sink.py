@@ -16,6 +16,7 @@ class MobileSink:
         trajectory: Optional[List[Tuple[float, float]]] = None,
         energy_weight: float = 0.4,
         distance_weight: float = 0.6,
+        seed: int = 42
     ):
         if mode not in {"fixed", "random", "adaptive", "eeosp"}:
             raise ValueError(
@@ -35,6 +36,9 @@ class MobileSink:
         self.current_index = 0
         self.energy_weight = energy_weight
         self.distance_weight = distance_weight
+
+        self.seed = seed
+        np.random.seed(self.seed)
 
         # Validate trajectory for fixed mode
         if self.mode == "fixed" and self.trajectory:
@@ -137,6 +141,9 @@ class MobileSink:
             self.current_target = target.copy()
 
     def update_position(self, round_num: int, nodes: Optional[List['SensorNode']] = None):
+        if not any(n.is_alive() for n in nodes):
+            return  # Network dead, stop moving
+
         if round_num % self.visit_period != 0:
             if self.current_target is not None:
                 self._move_towards_target(self.current_target)

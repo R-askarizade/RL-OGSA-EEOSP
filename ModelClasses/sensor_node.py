@@ -3,7 +3,6 @@ import math
 import random
 
 
-
 class SensorNode:
 
     def __init__(
@@ -14,6 +13,7 @@ class SensorNode:
         init_energy: float = 1.0,
         comm_range: float = 50.0,
         area_size: Tuple[float, float] = (500.0, 500.0),
+        seed: int = 42
     ):
         """
         # TODO -> FILL DOCUMENTATION
@@ -30,6 +30,9 @@ class SensorNode:
         self.is_cluster_head: bool = False
         self.cluster_id: Optional[int] = None
         self.next_data_gen_round = 0
+
+        self.seed = seed
+        random.seed(self.seed)
 
         # Statistics
         self.packets_sent = 0

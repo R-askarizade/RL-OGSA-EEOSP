@@ -1,6 +1,6 @@
 import numpy as np
 import math
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union, Tuple
 
 from sensor_node import SensorNode
 
@@ -21,6 +21,7 @@ class RoutingManager:
         weight_trust: float = 0.15,
         comm_range: float = 40.0,
         multipath: bool = True,
+        seed: int = 42
     ):
         if mode not in {"single-hop", "multi-hop"}:
             raise ValueError("Mode must be 'single-hop' or 'multi-hop'")
@@ -39,6 +40,9 @@ class RoutingManager:
 
         self.total_retransmissions = 0
 
+        self.seed = seed
+        np.random.seed(self.seed)
+
     def update_trust(self, node_id: int, success: bool):
         """Update trust score based on transmission success."""
         if success:
@@ -51,14 +55,21 @@ class RoutingManager:
     def transmit_with_retransmit(
         self,
         sender: 'SensorNode',
-        receiver: 'SensorNode',
+        receiver: Union['SensorNode', Tuple[float, float]],
         data_size: int,
         packet_loss_prob: float,
-        max_attempts: int = 3
+        max_attempts: int = 2
     ) -> tuple[bool, int]:
         """
         # TODO -> FILL DOCUMENTATIONS
         """
+        if not sender.is_alive():
+            return False, 0
+
+        # Handle sink position (no energy consumption for sink)
+        is_sink = isinstance(receiver, tuple) or (
+            hasattr(receiver, 'id') and receiver.id == -1)
+
         for attempt in range(1, max_attempts+1):
 
             if isinstance(receiver, SensorNode):
@@ -160,7 +171,7 @@ class RoutingManager:
                 receiver=dummy_sink_node,
                 data_size=self.energy_model.packet_size,
                 packet_loss_prob=packet_loss_prob,
-                max_attempts=3
+                max_attempts=2
             )
             self.total_retransmissions += (attempts - 1)
             self.update_trust(ch.id, success)
@@ -212,7 +223,7 @@ class RoutingManager:
                 receiver=best_candidate,
                 data_size=self.energy_model.packet_size,
                 packet_loss_prob=packet_loss_prob_hop,
-                max_attempts=3
+                max_attempts=2
             )
             self.total_retransmissions += (attempts - 1)
             self.update_trust(current.id, success)
@@ -235,7 +246,7 @@ class RoutingManager:
                     receiver=dummy_sink_node,
                     data_size=self.energy_model.packet_size,
                     packet_loss_prob=packet_loss_prob_final,
-                    max_attempts=3
+                    max_attempts=2
                 )
                 self.total_retransmissions += (attempts - 1)
                 self.update_trust(best_candidate.id, final_success)
@@ -253,7 +264,7 @@ class RoutingManager:
             receiver=dummy_sink_node,
             data_size=self.energy_model.packet_size,
             packet_loss_prob=packet_loss_prob,
-            max_attempts=3
+            max_attempts=2
         )
         self.total_retransmissions += (attempts - 1)
         self.update_trust(current.id, success)
@@ -285,7 +296,7 @@ class RoutingManager:
                 receiver=cluster_head,
                 data_size=self.energy_model.packet_size,
                 packet_loss_prob=packet_loss_prob,
-                max_attempts=3
+                max_attempts=2
             )
             self.total_retransmissions += (attempts - 1)
             # Trust updated for the sender (CM)
@@ -319,7 +330,7 @@ class RoutingManager:
                 receiver=d,
                 data_size=self.energy_model.packet_size,
                 packet_loss_prob=packet_loss_prob,
-                max_attempts=3
+                max_attempts=2
             )
             self.total_retransmissions += (attempts - 1)
             # Trust updated for the sender of this hop

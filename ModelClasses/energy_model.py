@@ -15,20 +15,38 @@ class EnergyModel:
     packet_size: int = 4000      # Default bits per message
 
     def __post_init__(self):
-        if self.E_mp <= 0:
-            raise ValueError("E_mp must be positive")
+        # Validate all energy parameters
+        for name, val in [("E_elec", self.E_elec), ("E_fs", self.E_fs),
+                          ("E_mp", self.E_mp), ("E_da", self.E_da)]:
+            if val < 0:
+                raise ValueError(f"{name} must be non-negative")
+
+        if self.E_mp == 0:
+            raise ValueError(
+                "E_mp must be positive for distance threshold calculation")
+
+        if self.packet_size <= 0:
+            raise ValueError("packet_size must be positive")
+
         self._d0 = np.sqrt(self.E_fs / self.E_mp)
 
     @property
     def d0(self) -> float:
         """Threshold distance between free-space and multipath models."""
+        if self.E_fs / self.E_mp > 1e10:  # Prevent overflow
+            return float('inf')
         return self._d0
 
     def tx_energy(self, distance: float, bits: int = None) -> float:
         """Compute transmission energy for 'bits' over 'distance' meters."""
         bits = bits if bits is not None else self.packet_size
+        if bits < 0:
+            raise ValueError("Bits must be non-negative")
         if distance < 0:
             raise ValueError("Distance must be non-negative")
+        if bits == 0 or distance == 0:
+            return 0.0  # Short-circuit trivial cases
+
         if distance < self.d0:
             return bits * (self.E_elec + self.E_fs * (distance ** 2))
         else:
@@ -37,11 +55,15 @@ class EnergyModel:
     def rx_energy(self, bits: int = None) -> float:
         """Compute reception energy."""
         bits = bits if bits is not None else self.packet_size
+        if bits < 0:
+            raise ValueError("Bits must be non-negative")
         return bits * self.E_elec
 
     def da_energy(self, bits: int = None) -> float:
         """Compute data aggregation energy."""
         bits = bits if bits is not None else self.packet_size
+        if bits < 0:
+            raise ValueError("Bits must be non-negative")
         return bits * self.E_da
 
     def consume_tx(self, node: 'SensorNode', distance: float, bits: int = None) -> float:

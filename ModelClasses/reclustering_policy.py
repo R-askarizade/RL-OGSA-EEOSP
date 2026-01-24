@@ -18,13 +18,16 @@ class ReclusteringPolicy:
         enable_energy: bool = True,
         enable_load: bool = True,
         enable_mobility: bool = True,
-        enable_fitness: bool = True
+        enable_fitness: bool = True,
+        seed: int = 42
     ):
         self.cm = cm
         self.recluster_period = recluster_period
         self.energy_threshold = energy_threshold
         self.load_threshold = load_threshold
         self.sink_move_threshold = sink_move_threshold
+
+        self.seed = seed
 
         self.enable_fitness = enable_fitness
         self._last_best_fitness = None
@@ -63,6 +66,7 @@ class ReclusteringPolicy:
                 population_size=6,
                 alpha=0.6,
                 beta=0.4,
+                seed=self.seed
             )
             best_heads = optimizer.optimize()
             best_fit = self._compute_fitness(best_heads)

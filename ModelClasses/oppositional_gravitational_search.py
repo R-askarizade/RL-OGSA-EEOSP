@@ -20,6 +20,7 @@ class GravitationalOptimizer:
         G0: float = 50.0,
         use_obl: bool = True,
         K0: int = None,
+        seed: int = 42
     ):
         self.nodes = [n for n in nodes if n.is_alive()]
         self.num_heads = min(num_heads, len(self.nodes))
@@ -31,6 +32,10 @@ class GravitationalOptimizer:
         self.G0 = G0
         self.use_obl = use_obl
         self.K0 = K0 if K0 is not None else population_size
+        self.seed = seed
+
+        pyrand.seed(self.seed)
+        np.random.seed(self.seed)
 
         if len(self.nodes) == 0:
             raise ValueError("No alive nodes provided for optimization.")
@@ -38,6 +43,8 @@ class GravitationalOptimizer:
         self.id_to_node = {n.id: n for n in self.nodes}
         self.all_ids = [n.id for n in self.nodes]
         self.id_set = set(self.all_ids)
+
+        self.rng = np.random.default_rng(seed=self.seed)
 
     def _fitness(self, head_ids: List[int]) -> float:
         """Fitness = α * avg_distance + β * (1 - avg_normalized_energy)"""
@@ -159,7 +166,10 @@ class GravitationalOptimizer:
                             for cid, force in candidates_with_force:
                                 cum_force += force
                                 if r <= cum_force:
-                                    if pyrand.random() < 0.8:
+                                    # Adaptive probability
+                                    acceptance_prob = max(
+                                        0.1, 1 - t/self.iterations)
+                                    if self.rng.random() < acceptance_prob:
                                         new_sol[j] = cid
                                     break
 

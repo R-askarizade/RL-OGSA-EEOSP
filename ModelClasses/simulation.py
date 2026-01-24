@@ -17,6 +17,83 @@ from scipy.spatial import Voronoi
 from scipy.spatial.distance import pdist, squareform
 
 
+class QLearningAgent:
+    def __init__(self, actions, alpha=0.1, gamma=0.9, epsilon=0.9, seed=42):
+        self.q_table = {}  # Map (state) -> {action: q_value}
+        self.actions = actions
+        self.alpha = alpha   # Learning rate
+        self.gamma = gamma   # Discount factor
+        self.epsilon = epsilon  # Exploration rate
+        self.seed = seed
+        random.seed(self.seed)
+
+    def get_state(self, node, nodes, area_size, comm_range):
+        """
+        Refined State Definition for Scalability.
+        Uses relative density to handle 100 vs 1000 node scenarios.
+        """
+        # 1. Neighbor Density (Normalized)
+        dists = [np.hypot(node.x - n.x, node.y - n.y)
+                 for n in nodes if n.id != node.id]
+        neighbor_count = sum(d < comm_range for d in dists)
+
+        # Calculate expected density based on total nodes & area (Global knowledge assumption or pre-config)
+        # expected_density = (N * pi * R^2) / Area
+        # For simplicity, we can just use broader buckets or relative logic:
+
+        if neighbor_count == 0:
+            density_state = 0  # Isolated (Bad)
+        elif neighbor_count <= 2:
+            density_state = 1  # Sparse
+        elif neighbor_count <= 6:
+            density_state = 2  # Good
+        elif neighbor_count <= 12:
+            density_state = 3  # Dense
+        else:
+            density_state = 4  # Very Dense (Overlapping)
+
+        # 2. Boundary Proximity
+        w, h = area_size
+        dist_bound = min(node.x, w - node.x, node.y, h - node.y)
+
+        if dist_bound < comm_range * 0.2:
+            bound_state = 0   # Critical (Too close)
+        elif dist_bound < comm_range:
+            bound_state = 1       # Near
+        else:
+            bound_state = 2                               # Safe
+
+        return (density_state, bound_state)
+
+    def choose_action(self, state):
+        self._ensure_state(state)
+        # Epsilon-greedy
+        if random.random() < self.epsilon:
+            return random.choice(self.actions)
+        else:
+            # Exploit: return action with max Q value
+            return max(self.q_table[state], key=self.q_table[state].get)
+
+    def learn(self, state, action, reward, next_state):
+        self._ensure_state(state)
+        self._ensure_state(next_state)
+
+        old_q = self.q_table[state][action]
+        max_future_q = max(self.q_table[next_state].values())
+
+        # Bellman Equation
+        new_q = old_q + self.alpha * \
+            (reward + self.gamma * max_future_q - old_q)
+        self.q_table[state][action] = new_q
+
+    def _ensure_state(self, state):
+        if state not in self.q_table:
+            self.q_table[state] = {a: 0.0 for a in self.actions}
+
+    def decay_epsilon(self, decay_rate=0.99):
+        self.epsilon = max(0.01, self.epsilon * decay_rate)
+
+
 class RewardCache:
     def __init__(self):
         self._last_hash = None
@@ -83,9 +160,11 @@ class Simulation:
         edge_threshold: float = 0.4,
         tune_edge_iterations: int = 20
     ):
-        if seed is not None:
-            np.random.seed(seed)
-            random.seed(seed)
+
+        self.seed = seed
+        if self.seed is not None:
+            np.random.seed(self.seed)
+            random.seed(self.seed)
 
         self.area_size = area_size
         self.n_nodes = n_nodes
@@ -122,6 +201,7 @@ class Simulation:
         # Overhead and buffer overflow metrics
         self.buffer_overflow_count = 0
         self.routing_overhead_bytes = 0
+        self.packets_dropped_link_failure = 0
 
         # list of (trigger_round, resolved_round)
         self.reclustering_events = []
@@ -149,6 +229,7 @@ class Simulation:
                 init_energy=self.init_energy,
                 comm_range=self.comm_range,
                 area_size=self.area_size,
+                seed=self.seed
             )
             for i in range(n_nodes)
         ]
@@ -178,7 +259,8 @@ class Simulation:
             speed=25.0,  # meters per round
             visit_period=self.visit_period,
             energy_weight=self.energy_weight,
-            distance_weight=self.distance_weight
+            distance_weight=self.distance_weight,
+            seed=self.seed
         )
         print(f"[Info] Sink speed: {self.sink.speed} m/round = "
               f"{self.sink.speed / self.round_duration_sec:.2f} m/s")
@@ -195,8 +277,9 @@ class Simulation:
             optimizer_factory=lambda nodes, k, sink: GravitationalOptimizer(
                 nodes=nodes, num_heads=k, sink_pos=sink,
                 iterations=self.go_iterations, population_size=self.population_size,
-                alpha=self.alpha, beta=self.beta, G0=self.G0
+                alpha=self.alpha, beta=self.beta, G0=self.G0, seed=self.seed
             ),
+            seed=self.seed
         )
         self.cluster_manager.sink_pos = self.sink.get_position()
 
@@ -220,7 +303,8 @@ class Simulation:
             weight_distance=self.weight_distance,
             weight_energy=self.weight_energy,
             weight_load=self.weight_load,
-            weight_trust=self.weight_trust
+            weight_trust=self.weight_trust,
+            seed=self.seed
         )
 
         # Metrics
@@ -484,99 +568,83 @@ class Simulation:
 
     def _fine_tune_edge_nodes_with_drl(self, edge_node_ids: List[int]):
         """
-        Use reinforcement learning to fine-tune edge node positions.
-        This implementation uses a proper reward-based optimization.
+        Refined RL approach: Uses Independent Q-Learning (IQL).
+        Each edge node acts as an agent maximizing local coverage and connectivity.
         """
-        learning_rate = 0.1
-        epsilon = 0.3  # Exploration rate
-        changes = []
+        # Define Actions: (dx, dy)
+        step = self.comm_range * 0.2
+        actions = [
+            (0, step), (0, -step), (step, 0), (-step, 0),  # N, S, E, W
+            (0, 0)  # Stay
+        ]
 
-        print(f"[DRL] Fine-tuning {len(edge_node_ids)} edge nodes...")
+        # Initialize one shared brain (or individual brains if preferred)
+        # Using a shared brain accelerates convergence for homogeneous nodes
+        agent = QLearningAgent(actions=range(
+            len(actions)), alpha=0.1, gamma=0.8, epsilon=0.9)
+
+        changes = []
+        print(
+            f"[RL-Corrected] Optimizing {len(edge_node_ids)} edge nodes using Q-Learning...")
 
         for iteration in range(self.tune_edge_iterations):
-            improved = 0
+
+            # Shuffle order to prevent sequential bias
+            random.shuffle(edge_node_ids)
 
             for node_id in edge_node_ids:
-                node_idx = node_id
-                old_x, old_y = self.nodes[node_idx].x, self.nodes[node_idx].y
+                node = self.nodes[node_id]
 
-                # Invalidate cache before computing old reward
-                if hasattr(self, '_reward_cache'):
-                    del self._reward_cache
+                # 1. Observe State (S)
+                state = agent.get_state(
+                    node, self.nodes, self.area_size, self.comm_range)
 
-                old_global_reward = self._compute_reward()
-                old_local_reward = self._compute_local_reward(node_id)
-                old_combined_reward = 0.4 * old_global_reward + 0.6 * old_local_reward
+                # 2. Choose Action (A)
+                action_idx = agent.choose_action(state)
+                dx, dy = actions[action_idx]
 
-                if np.random.random() < epsilon:
-                    dx = np.random.uniform(-self.comm_range *
-                                           0.5, self.comm_range * 0.5)
-                    dy = np.random.uniform(-self.comm_range *
-                                           0.5, self.comm_range * 0.5)
+                # Store old pos/metrics for reward calc
+                old_x, old_y = node.x, node.y
+                # Note: We use local reward to allow decentralized learning
+                old_reward = self._compute_local_reward(node_id)
+
+                # 3. Take Action
+                node.x = np.clip(node.x + dx, 0, self.area_size[0])
+                node.y = np.clip(node.y + dy, 0, self.area_size[1])
+
+                # 4. Observe New State (S') and Reward (R)
+                # (S' depends on new neighbors/position)
+                next_state = agent.get_state(
+                    node, self.nodes, self.area_size, self.comm_range)
+                new_reward = self._compute_local_reward(node_id)
+
+                # Calculate Reward Delta (Immediate Reward for the transition)
+                # You can use the absolute reward, but delta often stabilizes movement
+                r_immediate = new_reward - old_reward
+
+                # Penalty for moving out of bounds (soft constraint logic handled by clip, but add penalty)
+                if node.x == 0 or node.x == self.area_size[0] or node.y == 0:
+                    r_immediate -= 0.1
+
+                # 5. Learn (Update Q-Table)
+                agent.learn(state, action_idx, r_immediate, next_state)
+
+                # 6. Deployment Logic (Not pure RL, but necessary for static deployment)
+                # If the move was disastrously bad, revert it physically, but KEEP the learning
+                # so the agent remembers that state-action pair was bad.
+                if r_immediate < -0.05:  # Tolerance threshold
+                    node.x, node.y = old_x, old_y
                 else:
-                    move_direction = np.random.choice(
-                        ['toward_boundary', 'random'])
-                    if move_direction == 'toward_boundary':
-                        distances_to_boundaries = [
-                            old_x,
-                            self.area_size[0] - old_x,
-                            old_y,
-                            self.area_size[1] - old_y
-                        ]
-                        closest_boundary = np.argmin(distances_to_boundaries)
-                        step_size = np.random.uniform(
-                            0.05, 0.15) * max(self.area_size)
-                        if closest_boundary == 0:
-                            dx = -step_size
-                            dy = np.random.uniform(-5, 5)
-                        elif closest_boundary == 1:
-                            dx = step_size
-                            dy = np.random.uniform(-5, 5)
-                        elif closest_boundary == 2:
-                            dx = np.random.uniform(-5, 5)
-                            dy = -step_size
-                        else:
-                            dx = np.random.uniform(-5, 5)
-                            dy = step_size
-                    else:
-                        dx = np.random.uniform(-10, 10)
-                        dy = np.random.uniform(-10, 10)
-
-                new_x = np.clip(old_x + dx, 0, self.area_size[0])
-                new_y = np.clip(old_y + dy, 0, self.area_size[1])
-                self.nodes[node_idx].x, self.nodes[node_idx].y = new_x, new_y
-
-                # Invalidate cache before new reward
-                if hasattr(self, '_reward_cache'):
-                    del self._reward_cache
-
-                new_global_reward = self._compute_reward()
-                new_local_reward = self._compute_local_reward(node_id)
-                new_combined_reward = 0.4 * new_global_reward + 0.6 * new_local_reward
-
-                reward_improvement = new_combined_reward - old_combined_reward
-
-                if reward_improvement > 0 or (reward_improvement > -0.01 and np.random.random() < 0.1):
                     if node_id not in changes:
                         changes.append(node_id)
-                    improved += 1
-                else:
-                    self.nodes[node_idx].x, self.nodes[node_idx].y = old_x, old_y
 
-            epsilon *= 0.95
+            # Decay exploration rate
+            agent.decay_epsilon(0.95)
 
-            if iteration % 10 == 0:
-                if hasattr(self, '_reward_cache'):
-                    del self._reward_cache
-                final_reward = self._compute_reward()
-                print(f"  Iteration {iteration}: {improved}/{len(edge_node_ids)} nodes improved, "
-                      f"Global Reward: {final_reward:.4f}")
-
-        if hasattr(self, '_reward_cache'):
-            del self._reward_cache
-        final_reward = self._compute_reward()
-        print(f"[DRL] Optimization complete. Final reward: {final_reward:.4f}, "
-              f"{len(changes)} nodes changed position.")
+            if iteration % 5 == 0:
+                final_reward = self._compute_reward()  # Global reward for logging
+                print(
+                    f"  Iter {iteration}: Epsilon={agent.epsilon:.2f}, Global Reward={final_reward:.4f}")
 
         return changes
 
@@ -601,6 +669,7 @@ class Simulation:
                 node.energy = max(0.0, node.energy - (etx + erx))
                 if node.energy <= self.min_energy_threshold:
                     node.alive = False
+                    node.energy = 0.0
 
     def _build_node_to_ch_map(self):
         """Build a map from node ID to cluster head ID for fast lookup."""
@@ -752,6 +821,7 @@ class Simulation:
             for node in self.nodes:
                 if node.energy <= self.min_energy_threshold:
                     node.alive = False
+                    node.energy = 0.0
 
             # Log per-round results
             alive_count = len([n for n in self.nodes if n.is_alive()])

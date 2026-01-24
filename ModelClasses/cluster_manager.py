@@ -1,4 +1,5 @@
 import numpy as np
+import math
 from typing import List, Dict, Tuple
 
 
@@ -15,8 +16,11 @@ class ClusterManager:
         # TODO: SAY EXPLANATION OF CHOOSING THESE NUMBERS
         k_min: int = 2,
         k_max: int = 10,
+        # TODO: Add config for density scaling factor and optimizer params
+        density_scale: float = 1e4,
         # "optimizer", "adaptive" or "random"
         head_selection_strategy: str = "optimizer",
+        seed: int = 42,
         optimizer_factory=lambda nodes, k, sink: GravitationalOptimizer(
             nodes=nodes,
             num_heads=k,
@@ -29,16 +33,21 @@ class ClusterManager:
 
         self.nodes = [n for n in nodes if n.is_alive()
                       and n.has_known_position()]
+        self.seed = seed
         self.area_size = area_size
         self.comm_range = comm_range
         self.k_min = k_min
         self.k_max = k_max
         self.head_selection_strategy = head_selection_strategy
         self.optimizer_factory = optimizer_factory
+        self.optimizer_factory.seed = self.seed
 
         self.clusters: Dict[int, List['SensorNode']] = {}
         self.cluster_heads: List['SensorNode'] = []
-        self.sink_pos: Tuple[float, float] = (0.0, 0.0)
+        self.sink_pos: Tuple[float, float] = (
+            self.area_size[0] / 2.0, self.area_size[1] / 2.0)
+
+        self.density_scale = density_scale
 
     def _adaptive_cluster_count(self, sink_pos: Tuple[float, float] = (50, 50)) -> int:
         """Estimate optimal number of clusters based on energy and node density."""
@@ -55,6 +64,10 @@ class ClusterManager:
 
     def _select_heads_by_strategy(self, k: int, sink_pos: Tuple[float, float]) -> List['SensorNode']:
         """Select cluster heads based on configured strategy."""
+        np.random.seed(self.seed)  # Ensure reproducibility
+        if k <= 0 or k >= len(self.nodes):
+            return self.nodes  # Edge case fallback
+
         if self.head_selection_strategy == "optimizer" and self.optimizer_factory is not None:
             optimizer = self.optimizer_factory(self.nodes, k, sink_pos)
             head_ids = optimizer.optimize()
@@ -88,7 +101,8 @@ class ClusterManager:
             return
 
         heads = self._select_heads_by_strategy(k, sink_pos)
-        self.cluster_heads = heads
+        self.cluster_heads = [
+            h for h in heads if h.is_alive() and h.has_known_position()]
 
         # Assign members to nearest valid head (within communication range)
         for node in self.nodes:
