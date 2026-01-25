@@ -32,7 +32,6 @@ class SensorNode:
         self.next_data_gen_round = 0
 
         self.seed = seed
-        random.seed(self.seed)
 
         # Statistics
         self.packets_sent = 0
@@ -53,8 +52,10 @@ class SensorNode:
 
     def schedule_next_data_gen(self, current_round: int, avg_interval: int = 3):
         """Schedule the next data generation round based on an exponential-like random interval."""
-        next_interval = random.randint(1, avg_interval*2)
-        self.next_data_gen_round = current_round + next_interval
+        random.seed(self.seed)
+        # next_interval = random.randint(1, avg_interval*2)
+        # self.next_data_gen_round = current_round + next_interval
+        self.next_data_gen_round = current_round + 1
 
     def position(self) -> Optional[Tuple[float, float]]:
         """Return (x, y) if known, else None."""

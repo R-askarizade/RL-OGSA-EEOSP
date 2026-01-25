@@ -38,7 +38,6 @@ class MobileSink:
         self.distance_weight = distance_weight
 
         self.seed = seed
-        np.random.seed(self.seed)
 
         # Validate trajectory for fixed mode
         if self.mode == "fixed" and self.trajectory:
@@ -53,6 +52,7 @@ class MobileSink:
         return np.clip(pos, [0.0, 0.0], [w, h])
 
     def _choose_random_target(self) -> np.ndarray:
+        np.random.seed(self.seed)
         w, h = self.area_size
         return np.array([np.random.uniform(0, w), np.random.uniform(0, h)])
 
@@ -80,6 +80,7 @@ class MobileSink:
         """
         Selects sink position that minimizes cost = energy_variance + distance_cost
         """
+        np.random.seed(self.seed)
         if not cluster_heads:
             return self.current_pos.copy()
 

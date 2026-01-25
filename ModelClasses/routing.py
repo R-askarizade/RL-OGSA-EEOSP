@@ -63,6 +63,7 @@ class RoutingManager:
         """
         # TODO -> FILL DOCUMENTATIONS
         """
+        np.random.seed(self.seed)
         if not sender.is_alive():
             return False, 0
 
@@ -81,7 +82,7 @@ class RoutingManager:
             if not sender.is_alive():
                 return False, attempt
 
-            if isinstance(receiver, SensorNode):
+            if not is_sink and isinstance(receiver, SensorNode):
                 self.energy_model.consume_rx(receiver, data_size)
                 if not receiver.is_alive():
                     return False, attempt

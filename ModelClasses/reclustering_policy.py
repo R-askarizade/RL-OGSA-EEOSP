@@ -1,6 +1,8 @@
 import numpy as np
 from typing import List, Tuple, Optional
 
+from oppositional_gravitational_search import GravitationalOptimizer
+
 
 class ReclusteringPolicy:
     """
@@ -62,8 +64,8 @@ class ReclusteringPolicy:
                 num_heads=len(current_heads),
                 sink_pos=self.cm.sink_pos if hasattr(
                     self.cm, 'sink_pos') else (0, 0),
-                iterations=6,
-                population_size=6,
+                iterations=3,
+                population_size=3,
                 alpha=0.6,
                 beta=0.4,
                 seed=self.seed
@@ -73,8 +75,8 @@ class ReclusteringPolicy:
         except Exception:
             return False
 
-        # If current solution is much worse than best possible, trigger recluster
-        if current_fit > best_fit * (1 - threshold):
+        # If current solution is much better than best possible, trigger recluster
+        if current_fit > best_fit * (1 + threshold):
             self._last_best_fitness = best_fit
             self._last_current_fitness = current_fit
             return True

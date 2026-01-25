@@ -34,9 +34,6 @@ class GravitationalOptimizer:
         self.K0 = K0 if K0 is not None else population_size
         self.seed = seed
 
-        pyrand.seed(self.seed)
-        np.random.seed(self.seed)
-
         if len(self.nodes) == 0:
             raise ValueError("No alive nodes provided for optimization.")
 
@@ -74,6 +71,7 @@ class GravitationalOptimizer:
         return self.alpha * avg_dist + self.beta * (1.0 - e_avg)
 
     def _random_solution(self) -> List[int]:
+        pyrand.seed(self.seed)
         return pyrand.sample(self.all_ids, self.num_heads)
 
     def _opposite_solution(self, sol: List[int]) -> List[int]:
@@ -105,6 +103,7 @@ class GravitationalOptimizer:
 
     def optimize(self) -> List[int]:
         """Run discrete OGSA and return best cluster head set."""
+        pyrand.seed(self.seed)
         if len(self.nodes) <= self.num_heads:
             return [n.id for n in self.nodes]
 

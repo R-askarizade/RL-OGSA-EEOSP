@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 from typing import List, Dict, Tuple, Optional
 import random
 from scipy.spatial import Voronoi
-
 from scipy.spatial.distance import pdist, squareform
 
 
@@ -25,7 +24,6 @@ class QLearningAgent:
         self.gamma = gamma   # Discount factor
         self.epsilon = epsilon  # Exploration rate
         self.seed = seed
-        random.seed(self.seed)
 
     def get_state(self, node, nodes, area_size, comm_range):
         """
@@ -66,6 +64,7 @@ class QLearningAgent:
         return (density_state, bound_state)
 
     def choose_action(self, state):
+        random.seed(self.seed)
         self._ensure_state(state)
         # Epsilon-greedy
         if random.random() < self.epsilon:
@@ -293,6 +292,7 @@ class Simulation:
             enable_energy=True,
             enable_load=True,
             enable_mobility=(sink_mode in {"adaptive", "eeosp"}),
+            seed=self.seed
         )
 
         self.routing = RoutingManager(
@@ -581,7 +581,7 @@ class Simulation:
         # Initialize one shared brain (or individual brains if preferred)
         # Using a shared brain accelerates convergence for homogeneous nodes
         agent = QLearningAgent(actions=range(
-            len(actions)), alpha=0.1, gamma=0.8, epsilon=0.9)
+            len(actions)), alpha=0.1, gamma=0.8, epsilon=0.9, seed=self.seed)
 
         changes = []
         print(
@@ -814,6 +814,11 @@ class Simulation:
                         for _ in range(num_packets):
                             if ch.is_alive():
                                 self.energy_model.consume_da(ch)
+                    else:
+                        # NEW: Drop packets that failed to reach sink
+                        dropped_packets = len(ch.buffered_packets)
+                        self.packets_dropped_link_failure += dropped_packets
+                        ch.buffered_packets.clear()
 
                 self.total_delivered += delivered_this_round
 
@@ -843,8 +848,12 @@ class Simulation:
                 self.last_node_dead_round = r
                 break
 
+            if r % 1000 == 0:
+                print(self.cluster_manager.summary())
+
             # Log detailed metrics every 50 rounds
             if r % 50 == 0 or r == self.rounds or alive_count == 0:
+
                 total_initial = sum(n.init_energy for n in self.nodes)
                 total_remaining = sum(n.energy for n in self.nodes)
                 EC = total_initial - total_remaining
@@ -948,9 +957,9 @@ class Simulation:
 
         # Final metrics
         self.metrics = {
-            "FND": int(self.first_node_dead_round) if self.first_node_dead_round else -1,
-            "HND": int(self.half_nodes_dead_round) if self.half_nodes_dead_round else -1,
-            "LND": int(self.last_node_dead_round) if self.last_node_dead_round else -1,
+            "FND": int(self.first_node_dead_round) if self.first_node_dead_round else self.rounds,
+            "HND": int(self.half_nodes_dead_round) if self.half_nodes_dead_round else self.rounds,
+            "LND": int(self.last_node_dead_round) if self.last_node_dead_round else self.rounds,
             "TotalGenerated": self.total_generated,
             "TotalDelivered": self.total_delivered,
             "PDR": PDR,

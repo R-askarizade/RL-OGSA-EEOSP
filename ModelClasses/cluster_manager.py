@@ -27,7 +27,7 @@ class ClusterManager:
             sink_pos=sink,
             iterations=15,
             population_size=10,
-            use_obl=True,
+            use_obl=True
         ),
     ):
 
@@ -104,7 +104,15 @@ class ClusterManager:
         self.cluster_heads = [
             h for h in heads if h.is_alive() and h.has_known_position()]
 
-        # Assign members to nearest valid head (within communication range)
+        # Ensure proper flags & buffers
+        for ch in self.cluster_heads:
+            ch.become_cluster_head(cluster_id=ch.id)
+            # initialize/clear buffers
+            ch.buffered_packets = getattr(ch, 'buffered_packets', [])
+            ch.buffered_packets.clear()
+            ch.buffer_size = getattr(ch, 'buffer_size', 10)
+
+        # Assign members to nearest valid head
         for node in self.nodes:
             if node in heads:
                 self.clusters.setdefault(node.id, []).append(node)
@@ -112,7 +120,7 @@ class ClusterManager:
 
             best_head = None
             min_dist = float("inf")
-            for head in heads:
+            for head in self.cluster_heads:
                 try:
                     d = node.distance_to(head)
                     if d <= self.comm_range and d < min_dist:
@@ -124,7 +132,9 @@ class ClusterManager:
             if best_head is not None:
                 self.clusters.setdefault(best_head.id, []).append(node)
             else:
-                nearest = min(heads, key=lambda h: node.distance_to(h))
+                # fallback to nearest among cluster_heads
+                nearest = min(self.cluster_heads,
+                              key=lambda h: node.distance_to(h))
                 self.clusters.setdefault(nearest.id, []).append(node)
 
     def get_clusters(self) -> Dict[int, List['SensorNode']]:
