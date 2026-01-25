@@ -53,6 +53,7 @@ class SensorNode:
     def schedule_next_data_gen(self, current_round: int, avg_interval: int = 3):
         """Schedule the next data generation round based on an exponential-like random interval."""
         random.seed(self.seed)
+        # TODO: say why in paper (it has 2 option: 1. data generate eacg round, 2. data generate after some rounds)
         # next_interval = random.randint(1, avg_interval*2)
         # self.next_data_gen_round = current_round + next_interval
         self.next_data_gen_round = current_round + 1

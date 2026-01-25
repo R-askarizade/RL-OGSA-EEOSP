@@ -242,7 +242,7 @@ class Simulation:
             self._voronoi_repulsion_initial_placement()
             edge_ids = self._identify_edge_nodes()
             if edge_ids:
-                print(edge_ids)
+                print(f"Edge nodes: {edge_ids}")
                 self.edge_node_ids = edge_ids
 
                 self.previous_edge_pos = [
@@ -261,7 +261,7 @@ class Simulation:
             distance_weight=self.distance_weight,
             seed=self.seed
         )
-        print(f"[Info] Sink speed: {self.sink.speed} m/round = "
+        print(f"Sink speed: {self.sink.speed} m/round = "
               f"{self.sink.speed / self.round_duration_sec:.2f} m/s")
 
         # Energy, clustering, routing
@@ -585,7 +585,7 @@ class Simulation:
 
         changes = []
         print(
-            f"[RL-Corrected] Optimizing {len(edge_node_ids)} edge nodes using Q-Learning...")
+            f"RL Optimizing {len(edge_node_ids)} edge nodes using Q-Learning...")
 
         for iteration in range(self.tune_edge_iterations):
 
@@ -641,7 +641,7 @@ class Simulation:
             # Decay exploration rate
             agent.decay_epsilon(0.95)
 
-            if iteration % 5 == 0:
+            if iteration % 20 == 0:
                 final_reward = self._compute_reward()  # Global reward for logging
                 print(
                     f"  Iter {iteration}: Epsilon={agent.epsilon:.2f}, Global Reward={final_reward:.4f}")
@@ -814,11 +814,6 @@ class Simulation:
                         for _ in range(num_packets):
                             if ch.is_alive():
                                 self.energy_model.consume_da(ch)
-                    else:
-                        # NEW: Drop packets that failed to reach sink
-                        dropped_packets = len(ch.buffered_packets)
-                        self.packets_dropped_link_failure += dropped_packets
-                        ch.buffered_packets.clear()
 
                 self.total_delivered += delivered_this_round
 
@@ -847,13 +842,13 @@ class Simulation:
             if dead_count == self.n_nodes:
                 self.last_node_dead_round = r
                 break
-
-            if r % 1000 == 0:
-                print(self.cluster_manager.summary())
+            
+            # # DEBUGGING: Clustering logs summary
+            # if r % 1000 == 0:
+            #     self.cluster_manager.summary()
 
             # Log detailed metrics every 50 rounds
             if r % 50 == 0 or r == self.rounds or alive_count == 0:
-
                 total_initial = sum(n.init_energy for n in self.nodes)
                 total_remaining = sum(n.energy for n in self.nodes)
                 EC = total_initial - total_remaining

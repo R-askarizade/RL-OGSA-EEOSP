@@ -63,7 +63,6 @@ class RoutingManager:
         """
         # TODO -> FILL DOCUMENTATIONS
         """
-        np.random.seed(self.seed)
         if not sender.is_alive():
             return False, 0
 
