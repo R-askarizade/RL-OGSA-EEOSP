@@ -75,7 +75,8 @@ class RoutingManager:
             if isinstance(receiver, SensorNode):
                 dist = sender.distance_to(receiver)
             else:
-                dist = math.hypot(sender.x - receiver.x, sender.y - receiver.y)
+                dist = math.hypot(
+                    sender.x - receiver[0], sender.y - receiver[1])
 
             self.energy_model.consume_tx(sender, dist, data_size)
             if not sender.is_alive():
@@ -85,6 +86,22 @@ class RoutingManager:
                 self.energy_model.consume_rx(receiver, data_size)
                 if not receiver.is_alive():
                     return False, attempt
+
+            # ACK phase
+            ack_loss_prob = min(0.2, packet_loss_prob / 2)
+            if self.energy_model.include_ack_energy and (not is_sink) and isinstance(receiver, SensorNode):
+                # receiver transmits ACK
+                self.energy_model.consume_ack_tx(receiver, dist)
+                if not receiver.is_alive():
+                    return False, attempt
+                # sender receives ACK
+                self.energy_model.consume_ack_rx(sender)
+                if not sender.is_alive():
+                    return False, attempt
+                # ACK success?
+                if np.random.rand() <= ack_loss_prob:
+                    # ACK lost → retransmit DATA
+                    continue
 
             # Energy consumption for routing
             if np.random.rand() > packet_loss_prob:

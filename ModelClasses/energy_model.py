@@ -14,6 +14,10 @@ class EnergyModel:
     E_da: float = 5e-9           # Data aggregation energy (J/bit)
     packet_size: int = 4000      # Default bits per message
 
+    # ACK params
+    ack_size: int = 64
+    include_ack_energy: bool = False
+
     def __post_init__(self):
         # Validate all energy parameters
         for name, val in [("E_elec", self.E_elec), ("E_fs", self.E_fs),
@@ -68,6 +72,7 @@ class EnergyModel:
 
     def consume_tx(self, node: 'SensorNode', distance: float, bits: int = None) -> float:
         """Consume energy for transmission and update node's energy."""
+        bits = bits if bits is not None else self.packet_size
         e = self.tx_energy(distance, bits)
         node.energy = max(0.0, node.energy - e)
         # Optional: update node.alive if your SensorNode supports it
@@ -86,6 +91,20 @@ class EnergyModel:
     def consume_da(self, node: 'SensorNode', bits: int = None) -> float:
         """Consume energy for data aggregation and update node's energy."""
         e = self.da_energy(bits)
+        node.energy = max(0.0, node.energy - e)
+        if hasattr(node, 'alive') and node.energy <= 0:
+            node.alive = False
+        return e
+
+    def consume_ack_tx(self, node: 'SensorNode', distance: float) -> float:
+        if not self.include_ack_energy:
+            return 0.0
+        return self.consume_tx(node, distance, bits=self.ack_size)
+
+    def consume_ack_rx(self, node: 'SensorNode') -> float:
+        if not self.include_ack_energy:
+            return 0.0
+        e = self.rx_energy(self.ack_size)
         node.energy = max(0.0, node.energy - e)
         if hasattr(node, 'alive') and node.energy <= 0:
             node.alive = False

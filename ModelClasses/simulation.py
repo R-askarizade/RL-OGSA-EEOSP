@@ -131,6 +131,7 @@ class Simulation:
         comm_range: float = 50.0,
         sink_mode: str = "adaptive",
         routing_mode: str = "multi-hop",
+        include_ack_energy: bool = False,
         seed: Optional[int] = 42,
         localization_mode: str = "DRL",
         head_selection_strategy: str = "optimizer",
@@ -173,6 +174,7 @@ class Simulation:
         self.round_duration_sec = round_duration_sec  # seconds per round
         self.sink_mode = sink_mode
         self.routing_mode = routing_mode
+        self.include_ack_energy = include_ack_energy
         self.localization_mode = localization_mode
         self.head_selection_strategy = head_selection_strategy
 
@@ -265,7 +267,8 @@ class Simulation:
               f"{self.sink.speed / self.round_duration_sec:.2f} m/s")
 
         # Energy, clustering, routing
-        self.energy_model = EnergyModel(packet_size=4000)
+        self.energy_model = EnergyModel(
+            packet_size=4000, include_ack_energy=self.include_ack_energy)
         self.cluster_manager = ClusterManager(
             nodes=self.nodes,
             area_size=self.area_size,
@@ -842,7 +845,7 @@ class Simulation:
             if dead_count == self.n_nodes:
                 self.last_node_dead_round = r
                 break
-            
+
             # # DEBUGGING: Clustering logs summary
             # if r % 1000 == 0:
             #     self.cluster_manager.summary()
