@@ -12,7 +12,6 @@ class GravitationalOptimizer:
         self,
         nodes: List['SensorNode'],
         num_heads: int,
-        sink_pos: Tuple[float, float],
         iterations: int = 15,
         population_size: int = 10,
         alpha: float = 0.6,
@@ -24,7 +23,6 @@ class GravitationalOptimizer:
     ):
         self.nodes = [n for n in nodes if n.is_alive()]
         self.num_heads = min(num_heads, len(self.nodes))
-        self.sink_pos = sink_pos
         self.iterations = iterations
         self.pop_size = population_size
         self.alpha = alpha

@@ -40,7 +40,7 @@ class ReclusteringPolicy:
         self.enable_mobility = enable_mobility
 
         self.last_recluster_round = 0
-        self.last_sink_pos: Optional[Tuple[float, float]] = None
+        self.last_sink_pos: Optional[List[Tuple[float, float]]] = None
 
     def _fitness_based(self, current_round: int, check_interval: int = 10, threshold: float = 0.15) -> bool:
         """
@@ -62,8 +62,6 @@ class ReclusteringPolicy:
             optimizer = GravitationalOptimizer(
                 nodes=self.cm.nodes,
                 num_heads=len(current_heads),
-                sink_pos=self.cm.sink_pos if hasattr(
-                    self.cm, 'sink_pos') else (0, 0),
                 iterations=3,
                 population_size=3,
                 alpha=0.6,
@@ -137,13 +135,35 @@ class ReclusteringPolicy:
         """
         if not self.enable_mobility:
             return False
+
+        if isinstance(current_sink_pos[0], (float, int)):
+            current_positions = [tuple(current_sink_pos)]  # single sink
+        else:
+            current_positions = [tuple(p) for p in current_sink_pos]
+
         if self.last_sink_pos is None:
-            self.last_sink_pos = current_sink_pos
+            self.last_sink_pos = current_positions
             return False
-        dx = current_sink_pos[0] - self.last_sink_pos[0]
-        dy = current_sink_pos[1] - self.last_sink_pos[1]
-        distance = np.hypot(dx, dy)
-        return distance > self.sink_move_threshold
+
+        # If sink count changed, use centroids comparison (robust fallback)
+        if len(self.last_sink_pos) != len(current_positions):
+            prev_centroid = np.mean(self.last_sink_pos, axis=0)
+            curr_centroid = np.mean(current_positions, axis=0)
+            dist = np.hypot(
+                curr_centroid[0] - prev_centroid[0], curr_centroid[1] - prev_centroid[1])
+            self.last_sink_pos = current_positions
+            return dist > self.sink_move_threshold
+
+        # Otherwise compare pairwise by index (stable ordering assumed when Simulation creates sinks)
+        max_move = 0.0
+        for prev, curr in zip(self.last_sink_pos, current_positions):
+            dx = curr[0] - prev[0]
+            dy = curr[1] - prev[1]
+            d = np.hypot(dx, dy)
+            if d > max_move:
+                max_move = d
+
+        return max_move > self.sink_move_threshold
 
     def should_recluster(
         self, current_round: int, current_sink_pos: Tuple[float, float]
@@ -173,4 +193,7 @@ class ReclusteringPolicy:
         Updates internal state (last round and sink position).
         """
         self.last_recluster_round = current_round
-        self.last_sink_pos = current_sink_pos
+        if isinstance(current_sink_pos[0], (float, int)):
+            self.last_sink_pos = [tuple(current_sink_pos)]
+        else:
+            self.last_sink_pos = [tuple(p) for p in current_sink_pos]

@@ -15,6 +15,13 @@ class RoutingManager:
         nodes: List['SensorNode'],
         energy_model: 'EnergyModel',
         mode: str = "multi-hop",
+        area_size: Tuple[int, int] = (100, 100),
+
+        # Optimal sink selection mode
+        policy: str = 'load_aware',
+        num_sinks: bool = False,
+        sink_status_table: Optional[Dict['MobileSink', dict]] = None,
+
         weight_distance: float = 0.5,
         weight_energy: float = 0.2,
         weight_load: float = 0.15,
@@ -29,11 +36,19 @@ class RoutingManager:
                       and n.has_known_position()]
         self.energy_model = energy_model
         self.mode = mode
+        self.area_width, self.area_height = area_size[0], area_size[1]
+
         self.comm_range = comm_range
         self.wd = weight_distance
         self.we = weight_energy
         self.wl = weight_load
         self.wt = weight_trust
+
+        # Multi sinks support
+        self.policy = policy
+        self.num_sinks = num_sinks
+        self.sink_status_table = sink_status_table
+
         self.multipath = multipath
         self.load_count: Dict[int, int] = {n.id: 0 for n in self.nodes}
         self.trust_score: Dict[int, float] = {n.id: 1.0 for n in self.nodes}
@@ -165,14 +180,84 @@ class RoutingManager:
             excluded_nodes.update(n.id for n in path[1:-1])
         return paths if paths else [self._find_multihop_path(src, dst, domain)]
 
-    def route_to_sink(self, ch: 'SensorNode', sink: 'MobileSink', max_hops: int = 10) -> bool:
+    def choose_sink_for_node(self,
+                             node: 'SensorNode',
+                             sinks: Union['MobileSink', List['MobileSink']],
+                             alpha: float = 0.6, beta: float = 0.4) -> Tuple[Tuple[float, float], 'MobileSink']:
+        """
+        Choose sink position and sink object according to policy.
+        policy: 'nearest', 'load_aware', 'balanced'
+        alpha, beta: weights for distance vs. load (only used by load_aware)
+        Returns (sink_pos, sink_obj)
+        """
+        if not isinstance(sinks, list):
+            return sinks.get_position(), sinks
+
+        # Compute candidate info
+        candidates = []
+        # field diagonal normalization
+        field_diag = math.hypot(self.area_width, self.area_height) if hasattr(
+            self, 'area_width') else 1.0
+
+        for s in sinks:
+            pos = s.get_position()
+            dist = math.hypot(node.x - pos[0], node.y - pos[1])
+
+            if getattr(self, 'sink_status_table', None) is not None and s in self.sink_status_table:
+                advert = self.sink_status_table[s]
+                load_norm = advert.get(
+                    "current_load", 0.0) / max(1.0, advert.get("capacity", 1.0))
+            else:
+                load_norm = (getattr(s, "current_load", 0.0) /
+                             max(1.0, getattr(s, "capacity", 1.0)))
+
+            # Normalize distance
+            dist_norm = dist / (field_diag + 1e-9)
+
+            candidates.append((s, pos, dist, dist_norm, load_norm))
+
+        if self.policy == 'nearest':
+            s, pos, *_ = min(candidates, key=lambda t: t[2])  # min dist
+            return pos, s
+
+        if self.policy == 'load_aware':
+            # cost = alpha * dist_norm + beta * load_norm
+            s, pos, *_ = min(candidates, key=lambda t: alpha *
+                             t[3] + beta * t[4])
+            return pos, s
+
+        # balanced: prefer sinks with spare capacity, within some threshold distance
+        if self.policy == 'balanced':
+            # choose sinks under 80% utilization first, else fallback nearest
+            underloaded = [c for c in candidates if c[4] < 0.8]
+            if underloaded:
+                s, pos, *_ = min(underloaded, key=lambda t: t[2])
+                return pos, s
+            s, pos, *_ = min(candidates, key=lambda t: t[2])
+            return pos, s
+
+        # default fallback
+        underloaded = [c for c in candidates if c[4] < 0.8]
+        if underloaded:
+            s, pos, *_ = min(underloaded, key=lambda t: t[2])
+            return pos, s
+        s, pos, *_ = min(candidates, key=lambda t: t[2])
+        return pos, s
+
+    def route_to_sink(self, ch: 'SensorNode', sinks: Union['MobileSink', List['MobileSink']], max_hops: int = 10) -> bool:
         """
         # TODO -> FILL DOCUMENTATIONS
         """
         if not (ch.is_alive() and ch.has_known_position()):
             return False
 
-        sink_pos = sink.get_position()
+        # choose sink
+        if isinstance(sinks, list):
+            sink_pos, sink_obj = self.choose_sink_for_node(ch, sinks)
+        else:
+            sink_pos = sinks.get_position()
+            sink_obj = sinks
+
         sink_x, sink_y = sink_pos
         dist_to_sink = math.hypot(ch.x - sink_x, ch.y - sink_y)
         packet_loss_prob = min(
@@ -265,6 +350,7 @@ class RoutingManager:
                     packet_loss_prob=packet_loss_prob_final,
                     max_attempts=2
                 )
+
                 self.total_retransmissions += (attempts - 1)
                 self.update_trust(best_candidate.id, final_success)
                 return final_success and best_candidate.is_alive()

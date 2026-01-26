@@ -21,10 +21,9 @@ class ClusterManager:
         # "optimizer", "adaptive" or "random"
         head_selection_strategy: str = "optimizer",
         seed: int = 42,
-        optimizer_factory=lambda nodes, k, sink: GravitationalOptimizer(
+        optimizer_factory=lambda nodes, k: GravitationalOptimizer(
             nodes=nodes,
             num_heads=k,
-            sink_pos=sink,
             iterations=15,
             population_size=10,
             use_obl=True
@@ -44,12 +43,9 @@ class ClusterManager:
 
         self.clusters: Dict[int, List['SensorNode']] = {}
         self.cluster_heads: List['SensorNode'] = []
-        self.sink_pos: Tuple[float, float] = (
-            self.area_size[0] / 2.0, self.area_size[1] / 2.0)
-
         self.density_scale = density_scale
 
-    def _adaptive_cluster_count(self, sink_pos: Tuple[float, float] = (50, 50)) -> int:
+    def _adaptive_cluster_count(self) -> int:
         """Estimate optimal number of clusters based on energy and node density."""
         if not self.nodes:
             return 0
@@ -62,14 +58,14 @@ class ClusterManager:
         k_est = int(self.k_max * (e_avg / e_init) * f_density)
         return max(self.k_min, min(self.k_max, k_est))
 
-    def _select_heads_by_strategy(self, k: int, sink_pos: Tuple[float, float]) -> List['SensorNode']:
+    def _select_heads_by_strategy(self, k: int) -> List['SensorNode']:
         """Select cluster heads based on configured strategy."""
         np.random.seed(self.seed)  # Ensure reproducibility
         if k <= 0 or k >= len(self.nodes):
             return self.nodes  # Edge case fallback
 
         if self.head_selection_strategy == "optimizer" and self.optimizer_factory is not None:
-            optimizer = self.optimizer_factory(self.nodes, k, sink_pos)
+            optimizer = self.optimizer_factory(self.nodes, k)
             head_ids = optimizer.optimize()
             return [n for n in self.nodes if n.id in head_ids]
 
@@ -87,20 +83,18 @@ class ClusterManager:
                 len(self.nodes), size=k, replace=False, p=probs)
             return [self.nodes[i] for i in indices]
 
-    def form_clusters(self, sink_pos: Tuple[float, float] = (50, 50)):
+    def form_clusters(self):
         """
         Form clusters using the selected strategy.
-        :param sink_pos: position of sink/base station (used by some optimizers)
         """
-        self.sink_pos = sink_pos
         self.clusters.clear()
         self.cluster_heads.clear()
 
-        k = self._adaptive_cluster_count(sink_pos)
+        k = self._adaptive_cluster_count()
         if k == 0 or not self.nodes:
             return
 
-        heads = self._select_heads_by_strategy(k, sink_pos)
+        heads = self._select_heads_by_strategy(k)
         self.cluster_heads = [
             h for h in heads if h.is_alive() and h.has_known_position()]
 

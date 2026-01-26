@@ -16,7 +16,12 @@ class MobileSink:
         trajectory: Optional[List[Tuple[float, float]]] = None,
         energy_weight: float = 0.4,
         distance_weight: float = 0.6,
-        seed: int = 42
+        seed: int = 42,
+
+        # Support multi-sink capacity
+        capacity: int = 1000,
+        advert_interval: int = 5,
+        **kwargs
     ):
         if mode not in {"fixed", "random", "adaptive", "eeosp"}:
             raise ValueError(
@@ -37,6 +42,11 @@ class MobileSink:
         self.energy_weight = energy_weight
         self.distance_weight = distance_weight
 
+        self.capacity = capacity
+        self.advert_interval = advert_interval    # rounds between adverts
+        self.current_load = 0
+        self.last_advert_round = 0
+
         self.seed = seed
 
         # Validate trajectory for fixed mode
@@ -45,6 +55,16 @@ class MobileSink:
                 if not (0 <= x <= area_size[0] and 0 <= y <= area_size[1]):
                     raise ValueError(
                         f"Trajectory point {i} ({x},{y}) is outside area {area_size}")
+
+    def advertise_status(self, current_round: int) -> dict:
+        """
+        Returns a dict with load and capacity.
+        """
+        if current_round - self.last_advert_round >= self.advert_interval:
+            self.last_advert_round = current_round
+            return {"pos": self.get_position(), "current_load": float(self.current_load), "capacity": float(self.capacity)}
+        # If not time to advertise, still return latest known (stale)
+        return {"pos": self.get_position(), "current_load": float(self.current_load), "capacity": float(self.capacity)}
 
     def _clip_position(self, pos: np.ndarray) -> np.ndarray:
         """Ensure sink stays inside the area."""

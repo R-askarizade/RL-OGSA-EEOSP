@@ -137,26 +137,33 @@ class Simulation:
         head_selection_strategy: str = "optimizer",
         round_duration_sec: float = 50.0,  # 1 round = 50 seconds
 
+        # Routing
         weight_distance: float = 0.5,
         weight_energy: float = 0.3,
         weight_load: float = 0.1,
         weight_trust: float = 0.1,
+        sink_policy: str = 'load_aware',
+        num_sinks: bool = False,
 
+        # re-clustering
         recluster_period: int = 75,
         energy_threshold: float = 0.1,
         load_threshold: int = 10,
         sink_move_threshold: float = 20.0,
 
+        # OGSA
         go_iterations: int = 15,
         population_size: int = 10,
         alpha: float = 0.6,
         G0: float = 50.0,
         beta: float = 0.4,
 
+        # Mobile sink
         energy_weight: float = 0.4,
         distance_weight: float = 0.6,
         visit_period: int = 5,
 
+        # Node placement
         edge_threshold: float = 0.4,
         tune_edge_iterations: int = 20
     ):
@@ -183,6 +190,9 @@ class Simulation:
         self.weight_energy = weight_energy
         self.weight_load = weight_load
         self.weight_trust = weight_trust
+        self.sink_policy = sink_policy
+        self.num_sinks = num_sinks
+        self.sink_status_table: Dict[MobileSink, dict] = {}
         # Reclustering parameters
         self.recluster_period = recluster_period
         self.energy_threshold = energy_threshold
@@ -212,7 +222,9 @@ class Simulation:
         self.total_control_bytes = 0  # already partially tracked as routing_overhead_bytes
 
         # Movements plots
-        self.sink_trajectory = []     # sink trajectory
+        self.sink_trajectory = [[]
+                                # sink trajectory
+                                for _ in range(self.num_sinks)]
         self.previous_edge_pos = []
         self.changed_edge_pos = []
 
@@ -254,17 +266,35 @@ class Simulation:
                                          for node in self.nodes if node.id in final_edge_ids]
 
         # Mobile sink (velocity = self.sink.speed m/round)
-        self.sink = MobileSink(
-            area_size=self.area_size,
-            mode=self.sink_mode,
-            speed=25.0,  # meters per round
-            visit_period=self.visit_period,
-            energy_weight=self.energy_weight,
-            distance_weight=self.distance_weight,
-            seed=self.seed
-        )
-        print(f"Sink speed: {self.sink.speed} m/round = "
-              f"{self.sink.speed / self.round_duration_sec:.2f} m/s")
+        if self.num_sinks == 1:
+            self.sink = MobileSink(
+                area_size=self.area_size,
+                mode=self.sink_mode,
+                speed=25.0,  # meters per round
+                visit_period=self.visit_period,
+                energy_weight=self.energy_weight,
+                distance_weight=self.distance_weight,
+                seed=self.seed
+            )
+        else:
+            self.sink = []
+            for i in range(self.num_sinks):
+                ms = MobileSink(
+                    area_size=self.area_size,
+                    mode=self.sink_mode,
+                    speed=25.0,  # meters per round
+                    visit_period=self.visit_period,
+                    energy_weight=self.energy_weight,
+                    distance_weight=self.distance_weight,
+                    seed=self.seed)
+                ms.current_pos = np.array([(i+1) * self.area_size[0] / (self.num_sinks+1),
+                                           (i+1) * self.area_size[1] / (self.num_sinks+1)])
+                self.sink.append(ms)
+                self.sink_status_table[ms] = {"pos": ms.get_position(), "current_load": float(
+                    ms.current_load), "capacity": float(getattr(ms, 'capacity', 1.0))}
+
+        # print(f"Sink speed: {self.sink.speed} m/round = "
+        #       f"{self.sink.speed / self.round_duration_sec:.2f} m/s")
 
         # Energy, clustering, routing
         self.energy_model = EnergyModel(
@@ -276,14 +306,13 @@ class Simulation:
             k_min=8,
             k_max=20,
             head_selection_strategy=self.head_selection_strategy,
-            optimizer_factory=lambda nodes, k, sink: GravitationalOptimizer(
-                nodes=nodes, num_heads=k, sink_pos=sink,
+            optimizer_factory=lambda nodes, k: GravitationalOptimizer(
+                nodes=nodes, num_heads=k,
                 iterations=self.go_iterations, population_size=self.population_size,
                 alpha=self.alpha, beta=self.beta, G0=self.G0, seed=self.seed
             ),
             seed=self.seed
         )
-        self.cluster_manager.sink_pos = self.sink.get_position()
 
         self.reclustering_policy = ReclusteringPolicy(
             cm=self.cluster_manager,
@@ -302,7 +331,10 @@ class Simulation:
             nodes=self.nodes,
             energy_model=self.energy_model,
             mode=self.routing_mode,
+            area_size=self.area_size,
             comm_range=self.comm_range,
+            policy=self.sink_policy,
+            num_sinks=self.num_sinks,
             weight_distance=self.weight_distance,
             weight_energy=self.weight_energy,
             weight_load=self.weight_load,
@@ -322,7 +354,7 @@ class Simulation:
         self.last_node_dead_round = None
 
         # Initial setup
-        self.cluster_manager.form_clusters(sink_pos=self.sink.get_position())
+        self.cluster_manager.form_clusters()
         self._apply_control_packet_cost()
 
         # Schedule initial data generation
@@ -525,7 +557,7 @@ class Simulation:
 
         # 2. Connectivity
         alive_positions = np.array([[n.x, n.y]
-                                   for n in self.nodes if n.is_alive()])
+                                    for n in self.nodes if n.is_alive()])
         if len(alive_positions) == 0:
             connectivity_score = 0.0
         else:
@@ -692,6 +724,7 @@ class Simulation:
                 return head
         return None
 
+    # TODO
     def _send_to_base_station(self, data_size_bits: int, sink_pos: Tuple[float, float]):
         pass
 
@@ -719,21 +752,31 @@ class Simulation:
                 self.last_node_dead_round = r - 1
                 break
 
-            # Update mobile sink
-            self.sink.update_position(r, self.nodes)
+            # Update mobile sink, sink_trajectory update for plot MS movements
+            # Sink_positions
+            if self.num_sinks > 1:
+                sink_positions = []
+                for i, s in enumerate(self.sink):
+                    s.update_position(r, self.nodes)
+                    self.sink_trajectory[i].append(s.get_position())
+                    sink_positions.append(s.get_position())
 
-            # Add this to plot MS movements
-            self.sink_trajectory.append(self.sink.get_position())
+                    # store latest advert into a list/dict
+                    advert = s.advertise_status(current_round=r)
+                    self.sink_status_table[s] = advert
+            else:
+                self.sink.update_position(r, self.nodes)
+                self.sink_trajectory[0].append(self.sink.get_position())
+                sink_positions = self.sink.get_position()
 
             # Check for reclustering
             should_recluster, _ = self.reclustering_policy.should_recluster(
-                r, self.sink.get_position())
+                r, sink_positions)
             if should_recluster:
-                self.cluster_manager.form_clusters(
-                    sink_pos=self.sink.get_position())
+                self.cluster_manager.form_clusters()
                 self._apply_control_packet_cost()
                 self.reclustering_policy.update_after_recluster(
-                    r, self.sink.get_position())
+                    r, sink_positions)
                 # Record reconfiguration trigger
                 self.current_recluster_trigger = r
                 self.routing.reset_loads()  # reset loads after reclustering
@@ -872,12 +915,82 @@ class Simulation:
 
                 # Avg CH-to-sink distance (RL)
                 RL = 0
-                if self.cluster_manager.cluster_heads:
-                    sink_pos = self.sink.get_position()
-                    RL = np.mean([
-                        np.hypot(ch.x - sink_pos[0], ch.y - sink_pos[1])
-                        for ch in self.cluster_manager.cluster_heads if ch.is_alive()
-                    ])
+                alive_chs = [
+                    ch for ch in self.cluster_manager.cluster_heads if ch.is_alive()]
+                if not alive_chs:
+                    RL = 0.0
+                else:
+                    sinks = getattr(self, 'sink', None)
+                    if self.num_sinks == 1:
+                        # fallback to single sink object
+                        primary_sink = getattr(self, 'sink', None)
+                        if primary_sink is not None:
+                            sink_pos = primary_sink.get_position()
+                            dists = [
+                                np.hypot(ch.x - sink_pos[0], ch.y - sink_pos[1]) for ch in alive_chs]
+                            RL = float(np.mean(dists))
+                            RL_nearest = RL_assigned = RL
+                            per_sink_RL = {0: RL}
+                        else:
+                            RL = 0.0
+                            per_sink_RL = {}
+                    else:
+                        # Multi-sink case:
+                        # 1) RL_nearest: avg distance from CH to nearest sink
+                        nearest_dists = []
+                        # Also accumulate lists per sink index (by nearest)
+                        per_sink_lists = {i: [] for i in range(len(sinks))}
+                        for ch in alive_chs:
+                            dists_to_sinks = [np.hypot(
+                                ch.x - s.get_position()[0], ch.y - s.get_position()[1]) for s in sinks]
+                            min_idx = int(np.argmin(dists_to_sinks))
+                            min_dist = dists_to_sinks[min_idx]
+                            nearest_dists.append(min_dist)
+                            per_sink_lists[min_idx].append(min_dist)
+                        RL_nearest = float(
+                            np.mean(nearest_dists)) if nearest_dists else 0.0
+
+                        # 2) RL_assigned: avg distance to sink chosen by routing policy (if chooser exists)
+                        assigned_dists = []
+                        assigned_per_sink = {i: [] for i in range(len(sinks))}
+                        for ch in alive_chs:
+                            try:
+                                # attempt to use routing.choose_sink_for_node if available
+                                sink_pos, sink_obj = self.routing.choose_sink_for_node(
+                                    ch, sinks)
+                                dist_assigned = np.hypot(
+                                    ch.x - sink_pos[0], ch.y - sink_pos[1])
+                                # find index of sink_obj in sinks for bookkeeping (fallback to nearest if not found)
+                                try:
+                                    sink_idx = sinks.index(sink_obj)
+                                except Exception:
+                                    sink_idx = int(np.argmin(
+                                        [np.hypot(ch.x - s.get_position()[0], ch.y - s.get_position()[1]) for s in sinks]))
+                                assigned_dists.append(dist_assigned)
+                                assigned_per_sink[sink_idx].append(
+                                    dist_assigned)
+                            except Exception:
+                                # if chooser missing/fails, fallback to nearest
+                                dists_to_sinks = [np.hypot(
+                                    ch.x - s.get_position()[0], ch.y - s.get_position()[1]) for s in sinks]
+                                min_idx = int(np.argmin(dists_to_sinks))
+                                min_dist = dists_to_sinks[min_idx]
+                                assigned_dists.append(min_dist)
+                                assigned_per_sink[min_idx].append(min_dist)
+
+                        RL_assigned = float(
+                            np.mean(assigned_dists)) if assigned_dists else 0.0
+
+                        # compute per-sink means (None if no CHs assigned)
+                        per_sink_RL = {i: (float(np.mean(lst)) if lst else None)
+                                       for i, lst in assigned_per_sink.items()}
+
+                        # legacy RL: primary sink mean distance (sink[0]) for compatibility/plots
+                        primary_pos = sinks[0].get_position()
+                        primary_dists = [
+                            np.hypot(ch.x - primary_pos[0], ch.y - primary_pos[1]) for ch in alive_chs]
+                        RL = float(np.mean(primary_dists)
+                                   ) if primary_dists else 0.0
 
                 EE = TH / max(1e-9, EC)
 
@@ -952,6 +1065,13 @@ class Simulation:
                     traffic_load_pct)
                 self.detailed_metrics["Overhead_Normalized"].append(
                     overhead_normalized)
+                self.detailed_metrics.setdefault("RL_primary", []).append(RL)
+                self.detailed_metrics.setdefault(
+                    "RL_nearest", []).append(RL_nearest)
+                self.detailed_metrics.setdefault(
+                    "RL_assigned", []).append(RL_assigned)
+                self.detailed_metrics.setdefault(
+                    "RL_per_sink", []).append(per_sink_RL)
 
         # Final metrics
         self.metrics = {
