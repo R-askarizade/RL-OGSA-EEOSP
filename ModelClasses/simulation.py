@@ -10,7 +10,8 @@ from sensor_node import SensorNode
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Union
+from collections import defaultdict
 import random
 from scipy.spatial import Voronoi
 from scipy.spatial.distance import pdist, squareform
@@ -137,6 +138,19 @@ class Simulation:
         head_selection_strategy: str = "optimizer",
         round_duration_sec: float = 50.0,  # 1 round = 50 seconds
 
+        # Heterogeneity controls
+        enable_heterogeneity: bool = False,
+        hetero_mode: str = 'weak',   # 'weak' or 'two_tier'
+        weak_phi: float = 0.2,       # for weak heterogeneity: U(1-phi, 1+phi)
+        # fraction of super nodes, extra energy factor (super nodes have 1+alpha)
+        two_tier_m: float = 0.1,
+        two_tier_alpha: float = 1.0,
+
+        # Various data packet size
+        variable_packet_size: bool = False,
+        pkt_mean_bits: int = 4000,
+        pkt_std_bits: int = 500,
+
         # Routing
         weight_distance: float = 0.5,
         weight_energy: float = 0.3,
@@ -184,6 +198,20 @@ class Simulation:
         self.include_ack_energy = include_ack_energy
         self.localization_mode = localization_mode
         self.head_selection_strategy = head_selection_strategy
+
+        # Hetero config
+        self.enable_heterogeneity = bool(enable_heterogeneity)
+        if hetero_mode not in {'weak', 'two_tier'}:
+            raise ValueError("hetero_mode must be 'weak' or 'two_tier'")
+        self.hetero_mode = hetero_mode
+        self.weak_phi = weak_phi
+        self.two_tier_m = two_tier_m
+        self.two_tier_alpha = two_tier_alpha
+
+        # Packet size variability
+        self.variable_packet_size = variable_packet_size
+        self.pkt_mean_bits = pkt_mean_bits
+        self.pkt_std_bits = pkt_std_bits
 
         # Routing parameters
         self.weight_distance = weight_distance
@@ -233,13 +261,45 @@ class Simulation:
         self.edge_threshold = edge_threshold
         self.tune_edge_iterations = tune_edge_iterations
 
+        # Decide initial energy according to hetero policy
+        init_e = self.init_energy
+        self.init_energy = []
+        for i in range(self.n_nodes):
+            self.np_rng = np.random.default_rng(seed=self.seed + i)
+            if self.enable_heterogeneity and self.hetero_mode == 'weak':
+                # multiplicative jitter U(1-phi, 1+phi)
+                factor = self.np_rng.uniform(
+                    1.0 - self.weak_phi, 1.0 + self.weak_phi)
+                self.init_energy.append(init_e * factor)
+            # tow_tier
+            elif self.enable_heterogeneity and self.np_rng.random() < self.two_tier_m:
+                # Decide advanced nodes deterministically via RNG
+                self.init_energy.append(
+                    init_e * (1.0 + self.two_tier_alpha))
+            else:
+                self.init_energy.append(init_e)
+
+        # per-node default packet bits
+        if self.variable_packet_size:
+            data_packet_size = []
+            for i in range(self.n_nodes):
+                self.np_rng = np.random.default_rng(seed=self.seed + i)
+                # normal around mean, clipped
+                bits = int(self.np_rng.normal(
+                    self.pkt_mean_bits, self.pkt_std_bits))
+                bits = max(64, min(bits, 10_000))  # clip to practical range
+                data_packet_size.append(bits)
+        else:
+            data_packet_size = [4000] * self.n_nodes
+
         # Create sensor nodes
         self.nodes: List[SensorNode] = [
             SensorNode(
                 i,
                 x=float(np.random.rand() * area_size[0]),
                 y=float(np.random.rand() * area_size[1]),
-                init_energy=self.init_energy,
+                init_energy=self.init_energy[i],
+                data_packet_size=data_packet_size[i],
                 comm_range=self.comm_range,
                 area_size=self.area_size,
                 seed=self.seed
@@ -792,9 +852,9 @@ class Simulation:
                 self.total_generated += len(nodes_to_send)
 
                 # Increment Data Bytes When Packets Are Generated
-                data_bytes_per_packet = self.energy_model.packet_size // 8
-                self.total_data_bytes += len(nodes_to_send) * \
-                    data_bytes_per_packet
+                for node in nodes_to_send:
+                    data_bytes_per_packet = node.data_packet_size // 8
+                    self.total_data_bytes += data_bytes_per_packet
 
                 # Generate packets BEFORE routing
                 for node in nodes_to_send:
@@ -859,7 +919,8 @@ class Simulation:
                         ch.buffered_packets.clear()
                         for _ in range(num_packets):
                             if ch.is_alive():
-                                self.energy_model.consume_da(ch)
+                                self.energy_model.consume_da(
+                                    ch, bits=ch.data_packet_size)
 
                 self.total_delivered += delivered_this_round
 

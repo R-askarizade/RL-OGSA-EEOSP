@@ -11,6 +11,7 @@ class SensorNode:
         x: Optional[float] = None,
         y: Optional[float] = None,
         init_energy: float = 1.0,
+        data_packet_size: int = 4000,    # bits
         comm_range: float = 50.0,
         area_size: Tuple[float, float] = (500.0, 500.0),
         seed: int = 42
@@ -32,6 +33,9 @@ class SensorNode:
         self.next_data_gen_round = 0
 
         self.seed = seed
+
+        # Support Different Data Packet Sizes
+        self.data_packet_size = data_packet_size
 
         # Statistics
         self.packets_sent = 0

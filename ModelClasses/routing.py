@@ -271,7 +271,7 @@ class RoutingManager:
             success, attempts = self.transmit_with_retransmit(
                 sender=ch,
                 receiver=dummy_sink_node,
-                data_size=self.energy_model.packet_size,
+                data_size=ch.data_packet_size,
                 packet_loss_prob=packet_loss_prob,
                 max_attempts=2
             )
@@ -323,7 +323,7 @@ class RoutingManager:
             success, attempts = self.transmit_with_retransmit(
                 sender=current,
                 receiver=best_candidate,
-                data_size=self.energy_model.packet_size,
+                data_size=current.data_packet_size,
                 packet_loss_prob=packet_loss_prob_hop,
                 max_attempts=2
             )
@@ -346,7 +346,7 @@ class RoutingManager:
                 final_success, attempts = self.transmit_with_retransmit(
                     sender=best_candidate,
                     receiver=dummy_sink_node,
-                    data_size=self.energy_model.packet_size,
+                    data_size=best_candidate.data_packet_size,
                     packet_loss_prob=packet_loss_prob_final,
                     max_attempts=2
                 )
@@ -365,7 +365,7 @@ class RoutingManager:
         success, attempts = self.transmit_with_retransmit(
             sender=current,
             receiver=dummy_sink_node,
-            data_size=self.energy_model.packet_size,
+            data_size=current.data_packet_size,
             packet_loss_prob=packet_loss_prob,
             max_attempts=2
         )
@@ -397,7 +397,7 @@ class RoutingManager:
             success, attempts = self.transmit_with_retransmit(
                 sender=node,
                 receiver=cluster_head,
-                data_size=self.energy_model.packet_size,
+                data_size=node.data_packet_size,
                 packet_loss_prob=packet_loss_prob,
                 max_attempts=2
             )
@@ -431,7 +431,7 @@ class RoutingManager:
             success, attempts = self.transmit_with_retransmit(
                 sender=s,
                 receiver=d,
-                data_size=self.energy_model.packet_size,
+                data_size=s.data_packet_size,
                 packet_loss_prob=packet_loss_prob,
                 max_attempts=2
             )
