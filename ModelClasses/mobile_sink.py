@@ -118,24 +118,32 @@ class MobileSink:
         best_candidate = self.current_pos.copy()
         best_cost = float('inf')
 
-        max_energy_var = np.var(
-            [n.init_energy for n in cluster_heads]) if cluster_heads else 1.0
-        max_distance = np.linalg.norm([self.area_size[0], self.area_size[1]])
-        max_distance_cost = len(ch_positions) * max_distance
+        all_energy_vars = []
+        all_distance_costs = []
 
         for cand in candidates:
+            distances = np.linalg.norm(ch_positions - cand, axis=1)
+            # واریانس مصرف پیش‌بینی‌شده
+            all_energy_vars.append(np.var(distances ** 2))
+            all_distance_costs.append(np.sum(distances))
+
+        min_ev, max_ev = min(all_energy_vars), max(all_energy_vars)
+        min_dc, max_dc = min(all_distance_costs), max(all_distance_costs)
+        ev_range = max_ev - min_ev + 1e-9
+        dc_range = max_dc - min_dc + 1e-9
+
+        # max_distance = np.linalg.norm([self.area_size[0], self.area_size[1]])
+        # max_distance_cost = len(ch_positions) * max_distance
+        # max Var(d²) in [0, D²] = (D²)²/4
+        # max_energy_var = (max_distance ** 4) / 4.0
+
+        for i, cand in enumerate(candidates):
             # Compute distance to each CH
             distances = np.linalg.norm(ch_positions - cand, axis=1)
 
-            # Energy variance term
-            energy_variance = np.var(ch_energies)
-            energy_variance_norm = energy_variance / (max_energy_var + 1e-9)
+            energy_variance_norm = (all_energy_vars[i] - min_ev) / ev_range
+            distance_cost_norm = (all_distance_costs[i] - min_dc) / dc_range
 
-            # Distance cost: weighted sum of distances
-            distance_cost = np.sum(distances)
-            distance_cost_norm = distance_cost / (max_distance_cost + 1e-9)
-
-            # Total cost: ε * Var + α * Σ(Weight * Distance)
             cost = self.energy_weight * energy_variance_norm + \
                 self.distance_weight * distance_cost_norm
 

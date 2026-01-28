@@ -80,7 +80,7 @@ class ClusterManager:
             energies = np.array([n.energy for n in self.nodes])
             probs = energies / np.sum(energies)
             indices = np.random.choice(
-                len(self.nodes), size=k, replace=False, p=probs)
+                len(self.nodes), size=min(k, len(list(filter(lambda x: x > 0, probs)))), replace=False, p=probs)
             return [self.nodes[i] for i in indices]
 
     def form_clusters(self):
@@ -99,7 +99,7 @@ class ClusterManager:
             h for h in heads if h.is_alive() and h.has_known_position()]
 
         # Ensure proper flags & buffers
-        for ch in self.cluster_heads:
+        for ch in heads:
             ch.become_cluster_head(cluster_id=ch.id)
             # initialize/clear buffers
             ch.buffered_packets = getattr(ch, 'buffered_packets', [])
@@ -114,7 +114,7 @@ class ClusterManager:
 
             best_head = None
             min_dist = float("inf")
-            for head in self.cluster_heads:
+            for head in heads:
                 try:
                     d = node.distance_to(head)
                     if d <= self.comm_range and d < min_dist:
@@ -126,8 +126,7 @@ class ClusterManager:
             if best_head is not None:
                 self.clusters.setdefault(best_head.id, []).append(node)
             else:
-                # fallback to nearest among cluster_heads
-                nearest = min(self.cluster_heads,
+                nearest = min(heads,
                               key=lambda h: node.distance_to(h))
                 self.clusters.setdefault(nearest.id, []).append(node)
 

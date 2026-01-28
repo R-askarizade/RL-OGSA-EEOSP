@@ -151,13 +151,17 @@ class Simulation:
         pkt_mean_bits: int = 4000,
         pkt_std_bits: int = 500,
 
+        # Clistering
+        k_min: int = 8,
+        k_max: int = 20,
+
         # Routing
         weight_distance: float = 0.5,
         weight_energy: float = 0.3,
         weight_load: float = 0.1,
         weight_trust: float = 0.1,
         sink_policy: str = 'load_aware',
-        num_sinks: bool = False,
+        num_sinks: int = 1,
 
         # re-clustering
         recluster_period: int = 75,
@@ -179,7 +183,18 @@ class Simulation:
 
         # Node placement
         edge_threshold: float = 0.4,
-        tune_edge_iterations: int = 20
+        tune_edge_iterations: int = 20,
+        reward_coverage_weight: float = 0.35,
+        reward_edge_coverage_weight: float = 0.30,
+        reward_connectivity_score_weight: float = 0.20,
+        reward_uniformity_weight: float = 0.15,
+        local_reward_coverage_score_weight: float = 0.30,
+        local_reward_connectivity_score_weight: float = 0.25,
+        local_reward_boundary_score_weight: float = 0.30,
+        local_reward_overlap_penalty_weight: float = 0.15,
+        q_alpha: float = 0.2,
+        q_gamma: float = 0.8,
+        q_epsilon: float = 0.9,
     ):
 
         self.seed = seed
@@ -213,6 +228,9 @@ class Simulation:
         self.pkt_mean_bits = pkt_mean_bits
         self.pkt_std_bits = pkt_std_bits
 
+        # Clustering
+        self.k_min = k_min
+        self.k_max = k_max
         # Routing parameters
         self.weight_distance = weight_distance
         self.weight_energy = weight_energy
@@ -260,6 +278,17 @@ class Simulation:
         self._reward_cache = RewardCache()
         self.edge_threshold = edge_threshold
         self.tune_edge_iterations = tune_edge_iterations
+        self.reward_coverage_weight = reward_coverage_weight
+        self.reward_edge_coverage_weight = reward_edge_coverage_weight
+        self.reward_connectivity_score_weight = reward_connectivity_score_weight
+        self.reward_uniformity_weight = reward_uniformity_weight
+        self.local_reward_coverage_score_weight = local_reward_coverage_score_weight
+        self.local_reward_connectivity_score_weight = local_reward_connectivity_score_weight
+        self.local_reward_boundary_score_weight = local_reward_boundary_score_weight
+        self.local_reward_overlap_penalty_weight = local_reward_overlap_penalty_weight
+        self.q_alpha = q_alpha
+        self.q_gamma = q_gamma
+        self.q_epsilon = q_epsilon
 
         # Decide initial energy according to hetero policy
         init_e = self.init_energy
@@ -363,8 +392,8 @@ class Simulation:
             nodes=self.nodes,
             area_size=self.area_size,
             comm_range=self.comm_range,
-            k_min=8,
-            k_max=20,
+            k_min=self.k_min,
+            k_max=self.k_max,
             head_selection_strategy=self.head_selection_strategy,
             optimizer_factory=lambda nodes, k: GravitationalOptimizer(
                 nodes=nodes, num_heads=k,
@@ -493,7 +522,7 @@ class Simulation:
         if not self.nodes:
             return 0.0
 
-        # ----- LIGHTWEIGHT CACHE (no structural change) -----
+        # -- LIGHTWEIGHT CACHE (no structural change) --
         if not hasattr(self, '_reward_cache'):
             self._reward_cache = RewardCache()
 
@@ -575,10 +604,10 @@ class Simulation:
             uniformity = 0.0
 
         reward = (
-            0.35 * coverage +
-            0.30 * edge_coverage +
-            0.20 * connectivity_score +
-            0.15 * uniformity
+            self.reward_coverage_weight * coverage +
+            self.reward_edge_coverage_weight * edge_coverage +
+            self.reward_connectivity_score_weight * connectivity_score +
+            self.reward_uniformity_weight * uniformity
         )
 
         self._reward_cache.set(self.nodes, reward)
@@ -653,10 +682,10 @@ class Simulation:
             0.0, 1.0 - (min_distance / (self.comm_range * 0.3)))
 
         reward = (
-            0.30 * local_coverage_score +
-            0.25 * connectivity_score +
-            0.30 * boundary_score +
-            0.15 * (1.0 - overlap_penalty)
+            self.local_reward_coverage_score_weight * local_coverage_score +
+            self.local_reward_connectivity_score_weight * connectivity_score +
+            self.local_reward_boundary_score_weight * boundary_score +
+            self.local_reward_overlap_penalty_weight * (1.0 - overlap_penalty)
         )
 
         return reward
@@ -676,7 +705,7 @@ class Simulation:
         # Initialize one shared brain (or individual brains if preferred)
         # Using a shared brain accelerates convergence for homogeneous nodes
         agent = QLearningAgent(actions=range(
-            len(actions)), alpha=0.1, gamma=0.8, epsilon=0.9, seed=self.seed)
+            len(actions)), alpha=self.q_alpha, gamma=self.q_gamma, epsilon=self.q_epsilon, seed=self.seed)
 
         changes = []
         print(
@@ -980,6 +1009,10 @@ class Simulation:
                     ch for ch in self.cluster_manager.cluster_heads if ch.is_alive()]
                 if not alive_chs:
                     RL = 0.0
+                    RL_nearest = 0
+                    RL_per_sink = 0
+                    RL_assigned = 0
+                    per_sink_RL = {}
                 else:
                     sinks = getattr(self, 'sink', None)
                     if self.num_sinks == 1:
