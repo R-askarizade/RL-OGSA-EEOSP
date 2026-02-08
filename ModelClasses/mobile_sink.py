@@ -118,34 +118,27 @@ class MobileSink:
         best_candidate = self.current_pos.copy()
         best_cost = float('inf')
 
-        all_energy_vars = []
-        all_distance_costs = []
+        # Normalization factors (approximate max values for 0-1 scaling)
+        # Max variance of d^2 is approx (diagonal^2)^2 / 4
+        diag_sq = (self.area_size[0]**2 + self.area_size[1]**2)
+        max_var_d2 = (diag_sq ** 2) / 4.0
+        # Max sum of distance is approx N * diagonal
+        max_dist_sum = len(cluster_heads) * np.sqrt(diag_sq)
 
         for cand in candidates:
             distances = np.linalg.norm(ch_positions - cand, axis=1)
-            # واریانس مصرف پیش‌بینی‌شده
-            all_energy_vars.append(np.var(distances ** 2))
-            all_distance_costs.append(np.sum(distances))
+            # 1. Transmission Fairness: Variance of d^2 (proxy for energy fairness)
+            dist_sq = distances ** 2
+            fairness_cost = np.var(dist_sq)
+            fairness_norm = fairness_cost / (max_var_d2 + 1e-9)
 
-        min_ev, max_ev = min(all_energy_vars), max(all_energy_vars)
-        min_dc, max_dc = min(all_distance_costs), max(all_distance_costs)
-        ev_range = max_ev - min_ev + 1e-9
-        dc_range = max_dc - min_dc + 1e-9
+            # 2. Efficiency: Sum of distances (proxy for total energy)
+            efficiency_cost = np.sum(distances)
+            efficiency_norm = efficiency_cost / (max_dist_sum + 1e-9)
 
-        # max_distance = np.linalg.norm([self.area_size[0], self.area_size[1]])
-        # max_distance_cost = len(ch_positions) * max_distance
-        # max Var(d²) in [0, D²] = (D²)²/4
-        # max_energy_var = (max_distance ** 4) / 4.0
-
-        for i, cand in enumerate(candidates):
-            # Compute distance to each CH
-            distances = np.linalg.norm(ch_positions - cand, axis=1)
-
-            energy_variance_norm = (all_energy_vars[i] - min_ev) / ev_range
-            distance_cost_norm = (all_distance_costs[i] - min_dc) / dc_range
-
-            cost = self.energy_weight * energy_variance_norm + \
-                self.distance_weight * distance_cost_norm
+            # Total cost
+            cost = self.energy_weight * fairness_norm + \
+                self.distance_weight * efficiency_norm
 
             if cost < best_cost:
                 best_cost = cost
